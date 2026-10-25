@@ -15,7 +15,7 @@ export async function initializeBackend() {
           throw new Error('ADMIN_EMAIL and ADMIN_PASSWORD must be configured in production.');
         }
         if (!process.env.CLIENT_URL) {
-          process.env.CLIENT_URL = 'https://bluebells.vercel.app';
+          process.env.CLIENT_URL = 'https://bluebells-akmal-5st6.vercel.app';
         }
       }
 

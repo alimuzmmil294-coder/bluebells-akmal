@@ -1,4 +1,4 @@
-const defaultBaseUrl = import.meta.env.DEV ? '/api' : 'https://bluebells-backend.vercel.app/api';
+const defaultBaseUrl = import.meta.env.DEV ? '/api' : 'https://bluebells-akmal.vercel.app/api';
 const BASE_URL = (
   import.meta.env.VITE_API_URL || defaultBaseUrl
 ).replace(/\/+$/, '');

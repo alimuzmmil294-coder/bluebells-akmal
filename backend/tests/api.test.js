@@ -102,11 +102,11 @@ test('CORS allows configured storefront origins with credentials and rejects das
   assert.equal(allowedResponse.headers.get('access-control-allow-credentials'), 'true');
 
   const deployedOriginResponse = await fetch(`${baseUrl}/health`, {
-    headers: { Origin: 'https://bluebells-vv44.vercel.app' }
+    headers: { Origin: 'https://bluebells-akmal-5st6.vercel.app' }
   });
   assert.equal(
     deployedOriginResponse.headers.get('access-control-allow-origin'),
-    'https://bluebells-vv44.vercel.app'
+    'https://bluebells-akmal-5st6.vercel.app'
   );
 
   const rejectedResponse = await fetch(`${baseUrl}/health`, {
