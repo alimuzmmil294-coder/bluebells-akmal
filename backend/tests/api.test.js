@@ -535,6 +535,16 @@ test('Admin analytics reports sales by brand from recorded orders', async () => 
   });
   assert.equal(dashboardResponse.status, 200);
   assert.ok(dashboardResponse.data.data.recentOrders.every((order) => order.id === order.orderNumber));
+
+  const customersResponse = await request('/admin/customers?page=1&limit=10', {
+    headers: { Cookie: adminCookie }
+  });
+  assert.equal(customersResponse.status, 200);
+  assert.equal(customersResponse.data.success, true);
+  assert.ok(Array.isArray(customersResponse.data.data));
+  assert.equal(customersResponse.data.page, 1);
+  assert.equal(customersResponse.data.limit, 10);
+  assert.ok(typeof customersResponse.data.total === 'number');
 });
 
 test('11. Failed inventory journaling rolls back the order and reserved stock', async () => {
@@ -724,3 +734,99 @@ test('14. Admin Order Refund restores inventory and updates DailyAnalytics', asy
   assert.ok(refundTx, 'RETURN_REFUND inventory transaction journaled');
   assert.equal(refundTx.quantityDelta, 1);
 });
+
+test('15. Security: Unauthenticated product mutation routes return 401 Unauthorized', async () => {
+  const postRes = await request('/products', {
+    method: 'POST',
+    body: { name: 'Unauthorized Prototype', brand: 'Apple', price: 100 }
+  });
+  assert.equal(postRes.status, 401);
+
+  const putRes = await request('/products/iphone-16-pro-max', {
+    method: 'PUT',
+    body: { price: 1 }
+  });
+  assert.equal(putRes.status, 401);
+
+  const deleteRes = await request('/products/iphone-16-pro-max', {
+    method: 'DELETE'
+  });
+  assert.equal(deleteRes.status, 401);
+});
+
+test('16. Security: Insecure email query param on order detail returns 403 (Anti-IDOR)', async () => {
+  const orderRes = await request('/orders', {
+    method: 'POST',
+    body: {
+      customer: {
+        fullName: 'Private Customer',
+        email: 'private.user@example.com',
+        phone: '+92 300 5551234',
+        address: 'Secret Residence',
+        city: 'Islamabad'
+      },
+      items: [{ id: 'iphone-16-pro-max', quantity: 1 }],
+      paymentMethod: 'cod'
+    }
+  });
+  assert.equal(orderRes.status, 201);
+  const orderNumber = orderRes.data.data.orderNumber;
+  const guestCookie = orderRes.cookie ? orderRes.cookie.split(';')[0] : '';
+
+  // Attempt to access from a separate anonymous requester using ?email query
+  const intruderRes = await request(`/orders/${orderNumber}?email=private.user@example.com`);
+  assert.equal(intruderRes.status, 403);
+  assert.equal(intruderRes.data.success, false);
+
+  // The session that placed the order CAN access it
+  if (guestCookie) {
+    const ownerRes = await request(`/orders/${orderNumber}`, {
+      headers: { Cookie: guestCookie }
+    });
+    assert.equal(ownerRes.status, 200);
+    assert.equal(ownerRes.data.data.orderNumber, orderNumber);
+  }
+
+  // And an admin CAN access it
+  const adminAccessRes = await request(`/orders/${orderNumber}`, {
+    headers: { Cookie: adminCookie }
+  });
+  assert.equal(adminAccessRes.status, 200);
+  assert.equal(adminAccessRes.data.data.orderNumber, orderNumber);
+});
+
+test('17. Store Settings: Public GET and Admin-protected PUT persist in database', async () => {
+  const getRes = await request('/settings');
+  assert.equal(getRes.status, 200);
+  assert.equal(getRes.data.success, true);
+  assert.ok(getRes.data.data.storeName);
+
+  // Unauthenticated PUT should return 401
+  const unauthPut = await request('/settings', {
+    method: 'PUT',
+    body: { storeName: 'Hacked Store' }
+  });
+  assert.equal(unauthPut.status, 401);
+
+  // Admin PUT should update settings
+  const adminPut = await request('/admin/settings', {
+    method: 'PUT',
+    headers: { Cookie: adminCookie },
+    body: {
+      storeName: 'BlueBells Flagship Peshawar',
+      standardShippingFee: 1200,
+      freeShippingThreshold: 60000
+    }
+  });
+  assert.equal(adminPut.status, 200);
+  assert.equal(adminPut.data.success, true);
+  assert.equal(adminPut.data.data.storeName, 'BlueBells Flagship Peshawar');
+  assert.equal(adminPut.data.data.standardShippingFee, 1200);
+  assert.equal(adminPut.data.data.freeShippingThreshold, 60000);
+
+  // Subsequent public GET reflects persisted changes
+  const updatedGet = await request('/settings');
+  assert.equal(updatedGet.status, 200);
+  assert.equal(updatedGet.data.data.storeName, 'BlueBells Flagship Peshawar');
+});
+

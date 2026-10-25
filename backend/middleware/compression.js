@@ -1,9 +1,13 @@
 import zlib from 'node:zlib';
+import { promisify } from 'node:util';
+
+const gzipAsync = promisify(zlib.gzip);
+const deflateAsync = promisify(zlib.deflate);
 
 /**
- * High-performance response compression middleware using native node:zlib.
- * Handles Gzip and Deflate encoding for JSON and text payloads > 1KB.
- * Reduces bandwidth and socket buffer memory consumption by up to 80% during high-traffic surges.
+ * High-performance asynchronous response compression middleware using native node:zlib.
+ * Handles Gzip and Deflate encoding asynchronously on worker threads for JSON and text payloads > 1KB.
+ * Ensures the Node.js single-threaded event loop is never blocked by CPU-intensive compression.
  */
 export function responseCompression(req, res, next) {
   const acceptEncoding = req.headers['accept-encoding'] || '';
@@ -21,7 +25,7 @@ export function responseCompression(req, res, next) {
   }
 
   const selectedEncoding = supportsGzip ? 'gzip' : 'deflate';
-  const compressMethod = supportsGzip ? zlib.gzipSync : zlib.deflateSync;
+  const compressAsync = supportsGzip ? gzipAsync : deflateAsync;
 
   const originalSend = res.send;
   const originalJson = res.json;
@@ -53,22 +57,27 @@ export function responseCompression(req, res, next) {
       return originalSend.call(this, body);
     }
 
-    try {
-      const bufferToCompress = isBuffer ? body : Buffer.from(body, 'utf-8');
-      const compressed = compressMethod(bufferToCompress, {
-        level: zlib.constants.Z_BEST_SPEED // Optimized for maximum throughput and minimum CPU latency
+    const bufferToCompress = isBuffer ? body : Buffer.from(body, 'utf-8');
+
+    compressAsync(bufferToCompress, {
+      level: zlib.constants.Z_BEST_SPEED // Optimized for maximum throughput and minimum CPU latency
+    })
+      .then((compressed) => {
+        if (res.headersSent) return;
+        res.setHeader('Content-Encoding', selectedEncoding);
+        res.removeHeader('Content-Length');
+        res.setHeader('Content-Length', compressed.length);
+        originalSend.call(this, compressed);
+      })
+      .catch((compressErr) => {
+        // Graceful fallback to uncompressed payload if compression encounters an issue
+        console.warn('[Compression] Fallback to raw response:', compressErr.message);
+        if (!res.headersSent) {
+          originalSend.call(this, body);
+        }
       });
 
-      res.setHeader('Content-Encoding', selectedEncoding);
-      res.removeHeader('Content-Length');
-      res.setHeader('Content-Length', compressed.length);
-
-      return originalSend.call(this, compressed);
-    } catch (compressErr) {
-      // Graceful fallback to uncompressed payload if compression encounters an issue
-      console.warn('[Compression] Fallback to raw response:', compressErr.message);
-      return originalSend.call(this, body);
-    }
+    return res;
   };
 
   next();

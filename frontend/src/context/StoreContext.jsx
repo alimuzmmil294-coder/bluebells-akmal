@@ -162,6 +162,19 @@ export function StoreProvider({ children }) {
     }
   }, [isAdminLoggedIn]);
 
+  // Fetch store settings from database
+  const fetchSettings = useCallback(async () => {
+    try {
+      const res = await api.settings.get();
+      if (res.success && res.data) {
+        setSettings((prev) => ({ ...prev, ...res.data }));
+        setStorageItem('bluebells_settings', { ...INITIAL_SETTINGS, ...res.data });
+      }
+    } catch (err) {
+      console.warn('[Store] Could not fetch settings from database, using cached fallback:', err.message);
+    }
+  }, []);
+
   // Initial authentication check & product loading
   useEffect(() => {
     let isMounted = true;
@@ -202,27 +215,67 @@ export function StoreProvider({ children }) {
 
     initSession();
     fetchProducts({ limit: 100 });
+    fetchSettings();
 
     return () => {
       isMounted = false;
     };
-  }, [fetchProducts, fetchMyOrders]);
+  }, [fetchProducts, fetchMyOrders, fetchSettings]);
 
-  // Fetch admin data whenever admin logs in
+  // Fetch admin data when admin is logged in, only when tab is visible
   useEffect(() => {
     if (!isAdminLoggedIn) return undefined;
 
     fetchAdminData();
-    const refreshTimer = window.setInterval(fetchAdminData, 30000);
-    return () => window.clearInterval(refreshTimer);
+
+    const handleVisibilityOrFocus = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        fetchAdminData();
+      }
+    };
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+      window.addEventListener('focus', handleVisibilityOrFocus);
+    }
+
+    // Calm 90-second polling interval strictly guarded by tab visibility
+    const refreshTimer = window.setInterval(() => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        fetchAdminData();
+      }
+    }, 90000);
+
+    return () => {
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+        window.removeEventListener('focus', handleVisibilityOrFocus);
+      }
+      window.clearInterval(refreshTimer);
+    };
   }, [isAdminLoggedIn, fetchAdminData]);
 
-  // Refresh the public catalog periodically so admin changes appear without a live connection.
+  // Refresh the public catalog on window focus or visibility, not continuous background polling
   useEffect(() => {
     if (isAdminLoggedIn) return undefined;
 
-    const refreshTimer = window.setInterval(() => fetchProducts({ limit: 100 }), 60000);
-    return () => window.clearInterval(refreshTimer);
+    const handleWindowFocus = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        fetchProducts({ limit: 100 });
+      }
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', handleWindowFocus);
+      document.addEventListener('visibilitychange', handleWindowFocus);
+    }
+
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('focus', handleWindowFocus);
+        document.removeEventListener('visibilitychange', handleWindowFocus);
+      }
+    };
   }, [isAdminLoggedIn, fetchProducts]);
 
   // Product Operations (Database-backed)
@@ -333,10 +386,21 @@ export function StoreProvider({ children }) {
     }
   };
 
-  // Settings
-  const updateSettings = (newSettings) => {
+  // Settings (Database-backed with localStorage fallback)
+  const updateSettings = async (newSettings) => {
     setSettings((prev) => ({ ...prev, ...newSettings }));
-    addToast('Store settings updated', 'success');
+    try {
+      const res = await api.settings.update(newSettings);
+      if (res.success && res.data) {
+        setSettings((prev) => ({ ...prev, ...res.data }));
+        setStorageItem('bluebells_settings', { ...INITIAL_SETTINGS, ...res.data });
+        addToast('Store settings saved to database', 'success');
+        return res.data;
+      }
+    } catch (err) {
+      addToast(err.message || 'Failed to save settings to server', 'error');
+      throw err;
+    }
   };
 
   // Profile Update
@@ -456,6 +520,7 @@ export function StoreProvider({ children }) {
         addCoupon,
         deleteCoupon,
         updateSettings,
+        fetchSettings,
         updateProfile,
         login,
         register,

@@ -15,6 +15,8 @@ import {
 } from '../controllers/adminController.js';
 import { requireAdmin } from '../middleware/auth.js';
 
+import { getSettings, updateSettings } from '../controllers/settingController.js';
+
 const router = express.Router();
 
 // Apply requireAdmin to ALL admin routes
@@ -33,5 +35,7 @@ router.get('/sales', getAdminSales);
 router.get('/coupons', getAdminCoupons);
 router.post('/coupons', createAdminCoupon);
 router.delete('/coupons/:id', deleteAdminCoupon);
+router.get('/settings', getSettings);
+router.put('/settings', updateSettings);
 
 export default router;

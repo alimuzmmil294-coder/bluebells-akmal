@@ -1,15 +1,20 @@
 import app from './app.js';
-import { initializeBackend } from './bootstrap.js';
+import { startup } from './server.js';
 
 export default async function handler(req, res) {
   try {
-    await initializeBackend();
+    await startup;
   } catch (err) {
-    console.error('[API] Serverless initialization failed:', err.message);
+    console.error('[Serverless] Startup failed:', err?.message || err);
     return res.status(503).json({
       success: false,
       error: 'Backend initialization failed.'
     });
   }
+
+  if (req.url && !req.url.startsWith('/api') && req.url !== '/') {
+    req.url = '/api' + (req.url.startsWith('/') ? req.url : '/' + req.url);
+  }
+
   return app(req, res);
 }

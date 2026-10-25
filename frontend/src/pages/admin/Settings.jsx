@@ -1,32 +1,56 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Save, Store, Truck, Bell, Phone, Mail, MapPin } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
 import AdminHeader from '../../components/AdminHeader';
 
 export default function AdminSettings() {
   const { settings, updateSettings } = useStore();
+  const [saving, setSaving] = useState(false);
 
   const [form, setForm] = useState({
-    storeName: settings.storeName || 'Blue Bells Electronics',
-    tagline: settings.tagline || 'Certified & Official Member of Official iPhone Shop',
-    currency: settings.currency || 'PKR',
-    currencySymbol: settings.currencySymbol || 'Rs.',
-    standardShippingFee: settings.standardShippingFee || 1500,
-    freeShippingThreshold: settings.freeShippingThreshold || 50000,
-    announcementText: settings.announcementText || '⭐ Certified & Official Member of Official iPhone Shop | Blue Bells Electronics, Peshawar Cantt. | WhatsApp: 03005902425',
-    announcementActive: settings.announcementActive !== undefined ? settings.announcementActive : true,
-    supportEmail: settings.supportEmail || 'nomanjvd9@gmail.com',
-    supportPhone: settings.supportPhone || '03005902425',
-    storeAddress: settings.storeAddress || 'Blue Bells Electronics, Shop # 33, Sattagadai Plaza, 32 The Mall, Peshawar Cantt.'
+    storeName: settings?.storeName || 'Blue Bells Electronics',
+    tagline: settings?.tagline || 'Certified & Official Member of Official iPhone Shop',
+    currency: settings?.currency || 'PKR',
+    currencySymbol: settings?.currencySymbol || 'Rs.',
+    standardShippingFee: settings?.standardShippingFee || 1500,
+    freeShippingThreshold: settings?.freeShippingThreshold || 50000,
+    announcementText: settings?.announcementText || '⭐ Certified & Official Member of Official iPhone Shop | Blue Bells Electronics, Peshawar Cantt. | WhatsApp: 03005902425',
+    announcementActive: settings?.announcementActive !== undefined ? settings?.announcementActive : true,
+    supportEmail: settings?.supportEmail || 'nomanjvd9@gmail.com',
+    supportPhone: settings?.supportPhone || '03005902425',
+    storeAddress: settings?.storeAddress || 'Blue Bells Electronics, Shop # 33, Sattagadai Plaza, 32 The Mall, Peshawar Cantt.'
   });
 
-  const handleSubmit = (e) => {
+  useEffect(() => {
+    if (settings) {
+      setForm({
+        storeName: settings.storeName || 'Blue Bells Electronics',
+        tagline: settings.tagline || 'Certified & Official Member of Official iPhone Shop',
+        currency: settings.currency || 'PKR',
+        currencySymbol: settings.currencySymbol || 'Rs.',
+        standardShippingFee: settings.standardShippingFee ?? 1500,
+        freeShippingThreshold: settings.freeShippingThreshold ?? 50000,
+        announcementText: settings.announcementText || '⭐ Certified & Official Member of Official iPhone Shop | Blue Bells Electronics, Peshawar Cantt. | WhatsApp: 03005902425',
+        announcementActive: settings.announcementActive !== undefined ? settings.announcementActive : true,
+        supportEmail: settings.supportEmail || 'nomanjvd9@gmail.com',
+        supportPhone: settings.supportPhone || '03005902425',
+        storeAddress: settings.storeAddress || 'Blue Bells Electronics, Shop # 33, Sattagadai Plaza, 32 The Mall, Peshawar Cantt.'
+      });
+    }
+  }, [settings]);
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    updateSettings({
-      ...form,
-      standardShippingFee: Number(form.standardShippingFee),
-      freeShippingThreshold: Number(form.freeShippingThreshold)
-    });
+    setSaving(true);
+    try {
+      await updateSettings({
+        ...form,
+        standardShippingFee: Number(form.standardShippingFee),
+        freeShippingThreshold: Number(form.freeShippingThreshold)
+      });
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -193,9 +217,9 @@ export default function AdminSettings() {
           </div>
 
           {/* Save Button */}
-          <button type="submit" className="btn btn-primary btn-lg" style={{ gap: '10px' }}>
+          <button type="submit" className="btn btn-primary btn-lg" style={{ gap: '10px' }} disabled={saving}>
             <Save size={18} />
-            <span>Save All Configuration Changes</span>
+            <span>{saving ? 'Saving Configuration...' : 'Save All Configuration Changes'}</span>
           </button>
         </form>
       </div>

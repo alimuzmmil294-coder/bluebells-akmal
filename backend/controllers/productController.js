@@ -184,6 +184,13 @@ export async function getCategories(req, res, next) {
 
 export async function createProduct(req, res, next) {
   try {
+    if (!req.user || req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        error: 'Access forbidden. Administrator privileges are required to create products.'
+      });
+    }
+
     const productData = req.body;
 
     // Generate safe customId / SKU if not provided
@@ -238,6 +245,13 @@ export async function createProduct(req, res, next) {
 
 export async function updateProduct(req, res, next) {
   try {
+    if (!req.user || req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        error: 'Access forbidden. Administrator privileges are required to update products.'
+      });
+    }
+
     const { id } = req.params;
     const isMongoId = mongoose.isValidObjectId(id);
 
@@ -326,6 +340,13 @@ export async function updateProduct(req, res, next) {
 
 export async function deleteProduct(req, res, next) {
   try {
+    if (!req.user || req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        error: 'Access forbidden. Administrator privileges are required to delete products.'
+      });
+    }
+
     const { id } = req.params;
     const isMongoId = mongoose.isValidObjectId(id);
 

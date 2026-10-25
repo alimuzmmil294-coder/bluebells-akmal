@@ -1,5 +1,6 @@
+const defaultBaseUrl = import.meta.env.DEV ? '/api' : 'https://bluebells-backend.vercel.app/api';
 const BASE_URL = (
-  import.meta.env.VITE_API_URL || 'https://bluebells-backend.vercel.app/api'
+  import.meta.env.VITE_API_URL || defaultBaseUrl
 ).replace(/\/+$/, '');
 
 async function request(endpoint, options = {}) {
@@ -135,7 +136,15 @@ export const api = {
     },
     getCoupons: () => request('/admin/coupons'),
     createCoupon: (couponData) => request('/admin/coupons', { method: 'POST', body: couponData }),
-    deleteCoupon: (id) => request(`/admin/coupons/${id}`, { method: 'DELETE' })
+    deleteCoupon: (id) => request(`/admin/coupons/${id}`, { method: 'DELETE' }),
+    getSettings: () => request('/admin/settings'),
+    updateSettings: (settingsData) => request('/admin/settings', { method: 'PUT', body: settingsData })
+  },
+
+  // Store Settings (Public & Admin)
+  settings: {
+    get: () => request('/settings'),
+    update: (settingsData) => request('/admin/settings', { method: 'PUT', body: settingsData })
   }
 };
 

@@ -639,9 +639,12 @@ export async function seedDatabase() {
   } else {
     adminUser.role = 'admin';
     adminUser.status = 'active';
-    adminUser.password = adminPassword; // Triggers pre-save bcrypt hash
+    // Preserve existing admin password if already set
+    if (!adminUser.password) {
+      adminUser.password = adminPassword;
+    }
     await adminUser.save();
-    console.log(`[Seed] Updated Administrator account: ${normalizedAdminEmail}`);
+    console.log(`[Seed] Administrator account verified: ${normalizedAdminEmail}`);
   }
 
   // 2. Seed Products idempotently

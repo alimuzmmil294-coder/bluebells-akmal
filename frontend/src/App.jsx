@@ -45,20 +45,10 @@ function ScrollToTop() {
 }
 
 export default function App() {
-  const [initialLoading, setInitialLoading] = useState(true);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setInitialLoading(false);
-    }, 3000);
-    return () => clearTimeout(timer);
-  }, []);
-
   return (
     <StoreProvider>
       <CartProvider>
         <WishlistProvider>
-          {initialLoading && <PageLoader message="Loading BlueBells Luxury Flagships..." />}
           <BrowserRouter>
             <ScrollToTop />
             <Suspense fallback={<PageLoader message="Loading BlueBells..." />}>

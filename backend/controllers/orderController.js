@@ -16,6 +16,17 @@ export async function createOrder(req, res, next) {
       user: req.user || null
     });
 
+    // Store order in session so guest checkout confirmation pages function safely without public leaks
+    if (req.session) {
+      if (!Array.isArray(req.session.recentOrders)) {
+        req.session.recentOrders = [];
+      }
+      req.session.recentOrders.push(newOrder.orderNumber);
+      if (newOrder._id) {
+        req.session.recentOrders.push(newOrder._id.toString());
+      }
+    }
+
     // Clear cart in database if cart existed
     try {
       const userId = req.session?.userId || null;
@@ -94,13 +105,19 @@ export async function getOrderById(req, res, next) {
       });
     }
 
-    // Access control: if not admin, ensure user owns the order or has the order email
+    // Access control:
+    // Allow access ONLY if:
+    // 1. User is an admin
+    // 2. Authenticated user owns the order (order.user matches req.user._id)
+    // 3. Current session placed this order (in req.session.recentOrders for guest checkout)
     if (req.user?.role !== 'admin') {
       const userMatches = req.user && order.user && order.user.toString() === req.user._id.toString();
-      const emailMatches = req.query.email && order.customer.email.toLowerCase() === req.query.email.toLowerCase();
-      const sessionMatches = req.user && order.customer.email.toLowerCase() === req.user.email.toLowerCase();
+      const sessionOrderMatches = req.session?.recentOrders && (
+        req.session.recentOrders.includes(order.orderNumber) ||
+        (order._id && req.session.recentOrders.includes(order._id.toString()))
+      );
 
-      if (!userMatches && !emailMatches && !sessionMatches) {
+      if (!userMatches && !sessionOrderMatches) {
         return res.status(403).json({
           success: false,
           error: 'Access denied. You do not have permission to view this order.'
@@ -134,8 +151,12 @@ export async function cancelOrder(req, res, next) {
       (order.user && order.user.toString() === req.user._id.toString()) ||
       order.customer.email.toLowerCase() === req.user.email.toLowerCase()
     );
+    const sessionOrderMatches = req.session?.recentOrders && (
+      req.session.recentOrders.includes(order.orderNumber) ||
+      (order._id && req.session.recentOrders.includes(order._id.toString()))
+    );
 
-    if (!isOwner && req.user?.role !== 'admin') {
+    if (!isOwner && !sessionOrderMatches && req.user?.role !== 'admin') {
       return res.status(403).json({ success: false, error: 'Access denied.' });
     }
 

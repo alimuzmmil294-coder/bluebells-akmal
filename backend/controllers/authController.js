@@ -117,9 +117,13 @@ export async function login(req, res, next) {
       try {
         await mergeSessionCart(previousSessionId, user._id, req.sessionID);
 
-        // Update last login timestamp asynchronously
+        // Update last login timestamp
         user.lastLoginAt = new Date();
-        user.save().catch((e) => console.error('Failed to update last login:', e.message));
+        try {
+          await user.save();
+        } catch (saveErr) {
+          console.error(`[Auth] Failed to update lastLoginAt for user ${user.email} (${user._id}):`, saveErr.message);
+        }
 
         req.session.save((saveErr) => {
           if (saveErr) return next(saveErr);

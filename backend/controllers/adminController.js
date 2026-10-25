@@ -205,82 +205,77 @@ export async function getAdminCustomers(req, res, next) {
     page = Math.max(1, parseInt(page, 10) || 1);
     limit = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
 
-    // Aggregate customers from both User model and Order history
-    const userCustomers = await User.find({ role: 'user' }).lean();
-
-    // Aggregate stats per email from Orders
-    const orderAggregates = await Order.aggregate([
-      {
-        $group: {
-          _id: { $toLower: '$customer.email' },
-          fullName: { $first: '$customer.fullName' },
-          phone: { $first: '$customer.phone' },
-          city: { $first: '$customer.city' },
-          orderCount: { $sum: 1 },
-          totalSpent: { $sum: '$grandTotal' },
-          firstOrderDate: { $min: '$createdAt' }
-        }
-      }
-    ]);
-
-    const customerMap = new Map();
-
-    // Populate from orders
-    orderAggregates.forEach((agg) => {
-      customerMap.set(agg._id, {
-        id: `cust-${agg._id.replace(/[^a-z0-9]/g, '')}`,
-        name: agg.fullName,
-        email: agg._id,
-        phone: agg.phone,
-        city: agg.city || 'Lahore',
-        orderCount: agg.orderCount,
-        totalSpent: agg.totalSpent,
-        joinedDate: new Date(agg.firstOrderDate).toISOString().split('T')[0]
-      });
-    });
-
-    // Merge registered users
-    userCustomers.forEach((u) => {
-      const email = u.email.toLowerCase();
-      if (customerMap.has(email)) {
-        const existing = customerMap.get(email);
-        existing.id = u._id.toString();
-        existing.name = u.name;
-        if (u.phone) existing.phone = u.phone;
-        if (u.city) existing.city = u.city;
-      } else {
-        customerMap.set(email, {
-          id: u._id.toString(),
-          name: u.name,
-          email: u.email,
-          phone: u.phone || 'N/A',
-          city: u.city || 'Lahore',
-          orderCount: 0,
-          totalSpent: 0,
-          joinedDate: new Date(u.createdAt).toISOString().split('T')[0]
-        });
-      }
-    });
-
-    let customerList = Array.from(customerMap.values());
+    const filter = { role: 'user' };
 
     if (search && search.trim()) {
-      const q = search.trim().toLowerCase();
-      customerList = customerList.filter(
-        (c) =>
-          c.name.toLowerCase().includes(q) ||
-          c.email.toLowerCase().includes(q) ||
-          (c.city && c.city.toLowerCase().includes(q))
-      );
+      const q = search.trim();
+      filter.$or = [
+        { name: { $regex: q, $options: 'i' } },
+        { email: { $regex: q, $options: 'i' } },
+        { phone: { $regex: q, $options: 'i' } },
+        { city: { $regex: q, $options: 'i' } }
+      ];
     }
 
-    const total = customerList.length;
+    const skip = (page - 1) * limit;
+
+    // Database-level pagination for the User collection
+    const [total, users] = await Promise.all([
+      User.countDocuments(filter),
+      User.find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean()
+    ]);
+
+    // Targeted aggregation for only the requested page of users
+    const userEmails = users.map((u) => u.email.toLowerCase());
+    const userIds = users.map((u) => u._id);
+
+    const orderAggregates = userEmails.length > 0
+      ? await Order.aggregate([
+          {
+            $match: {
+              $or: [
+                { 'customer.email': { $in: userEmails } },
+                { user: { $in: userIds } }
+              ]
+            }
+          },
+          {
+            $group: {
+              _id: { $toLower: '$customer.email' },
+              orderCount: { $sum: 1 },
+              totalSpent: { $sum: '$grandTotal' },
+              firstOrderDate: { $min: '$createdAt' }
+            }
+          }
+        ])
+      : [];
+
+    const statsMap = new Map(orderAggregates.map((agg) => [agg._id, agg]));
+
+    const formattedCustomers = users.map((u) => {
+      const emailLower = u.email.toLowerCase();
+      const stats = statsMap.get(emailLower);
+      return {
+        id: u._id.toString(),
+        name: u.name,
+        email: u.email,
+        phone: u.phone || 'N/A',
+        city: u.city || 'Lahore',
+        orderCount: stats?.orderCount || 0,
+        totalSpent: stats?.totalSpent || 0,
+        joinedDate: new Date(stats?.firstOrderDate || u.createdAt).toISOString().split('T')[0]
+      };
+    });
+
     const totalPages = Math.ceil(total / limit) || 1;
-    const paginated = customerList.slice((page - 1) * limit, page * limit);
 
     res.status(200).json({
       success: true,
-      data: paginated,
+      data: formattedCustomers,
       page,
       limit,
       total,

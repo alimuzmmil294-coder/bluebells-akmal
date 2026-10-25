@@ -138,11 +138,13 @@ export async function createOrderService({
       });
     }
   } catch (stockErr) {
-    // Rollback any stock decrements that were already made
-    for (const rollback of stockUpdatedProducts) {
-      await Product.findByIdAndUpdate(rollback.product._id, {
-        $inc: { stock: rollback.quantity }
-      });
+    // Parallel rollback of any stock decrements that were already made
+    if (stockUpdatedProducts.length > 0) {
+      await Promise.all(
+        stockUpdatedProducts.map(({ product, quantity }) =>
+          Product.findByIdAndUpdate(product._id, { $inc: { stock: quantity } })
+        )
+      );
     }
     throw stockErr;
   }
@@ -254,28 +256,29 @@ export async function updateOrderStatusService(orderNumberOrId, newStatus, admin
 
   // Handle cancellation: restore inventory if moving to Cancelled
   if (newStatus === 'Cancelled' && previousStatus !== 'Cancelled') {
-    for (const item of order.items) {
-      const restored = await Product.findByIdAndUpdate(
-        item.product,
-        { $inc: { stock: item.quantity } },
-        { returnDocument: 'after' }
-      );
-      if (restored) {
-        await InventoryTx.create({
-          product: restored._id,
-          sku: restored.sku,
-          type: 'CANCEL_RESTORE',
-          quantityDelta: item.quantity,
-          previousStock: restored.stock - item.quantity,
-          newStock: restored.stock,
-          order: order._id,
-          orderNumber: order.orderNumber,
-          performedBy: adminUser ? adminUser._id : null,
-          reason: `Order #${order.orderNumber} cancelled by admin`
-        });
-
-      }
-    }
+    await Promise.all(
+      order.items.map(async (item) => {
+        const restored = await Product.findByIdAndUpdate(
+          item.product,
+          { $inc: { stock: item.quantity } },
+          { returnDocument: 'after' }
+        );
+        if (restored) {
+          await InventoryTx.create({
+            product: restored._id,
+            sku: restored.sku,
+            type: 'CANCEL_RESTORE',
+            quantityDelta: item.quantity,
+            previousStock: restored.stock - item.quantity,
+            newStock: restored.stock,
+            order: order._id,
+            orderNumber: order.orderNumber,
+            performedBy: adminUser ? adminUser._id : null,
+            reason: `Order #${order.orderNumber} cancelled by admin`
+          });
+        }
+      })
+    );
     order.cancelledAt = new Date();
   }
 
@@ -316,28 +319,29 @@ export async function processRefundService(orderNumberOrId, { refundAmount, reas
   order.cancelReason = reason || 'Customer refund processed';
 
   if (restoreInventory) {
-    for (const item of order.items) {
-      const restored = await Product.findByIdAndUpdate(
-        item.product,
-        { $inc: { stock: item.quantity } },
-        { returnDocument: 'after' }
-      );
-      if (restored) {
-        await InventoryTx.create({
-          product: restored._id,
-          sku: restored.sku,
-          type: 'RETURN_REFUND',
-          quantityDelta: item.quantity,
-          previousStock: restored.stock - item.quantity,
-          newStock: restored.stock,
-          order: order._id,
-          orderNumber: order.orderNumber,
-          performedBy: adminUser ? adminUser._id : null,
-          reason: `Refund for Order #${order.orderNumber}`
-        });
-
-      }
-    }
+    await Promise.all(
+      order.items.map(async (item) => {
+        const restored = await Product.findByIdAndUpdate(
+          item.product,
+          { $inc: { stock: item.quantity } },
+          { returnDocument: 'after' }
+        );
+        if (restored) {
+          await InventoryTx.create({
+            product: restored._id,
+            sku: restored.sku,
+            type: 'RETURN_REFUND',
+            quantityDelta: item.quantity,
+            previousStock: restored.stock - item.quantity,
+            newStock: restored.stock,
+            order: order._id,
+            orderNumber: order.orderNumber,
+            performedBy: adminUser ? adminUser._id : null,
+            reason: `Refund for Order #${order.orderNumber}`
+          });
+        }
+      })
+    );
   }
 
   await order.save();

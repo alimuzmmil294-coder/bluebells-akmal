@@ -3,85 +3,217 @@ import Product from '../models/Product.js';
 import DailyAnalytics from '../models/DailyAnalytics.js';
 
 export async function getDashboardMetrics() {
-  const startOfToday = new Date();
+  const now = new Date();
+  const startOfToday = new Date(now);
   startOfToday.setHours(0, 0, 0, 0);
 
-  // Fetch orders
+  // Six months ago (start of month 5 months before current month)
+  const startOfSixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+  startOfSixMonthsAgo.setHours(0, 0, 0, 0);
+
+  // Execute database queries and native aggregation pipelines concurrently
   const [
-    allOrders,
-    todayOrders,
     totalProducts,
     lowStockProducts,
     outOfStockProducts,
-    recentOrdersList
+    recentOrdersList,
+    [aggregationResults]
   ] = await Promise.all([
-    Order.find({}).lean(),
-    Order.find({ createdAt: { $gte: startOfToday } }).lean(),
     Product.countDocuments({ active: true }),
     Product.countDocuments({ active: true, stock: { $gt: 0, $lte: 5 } }),
     Product.countDocuments({ active: true, stock: { $lte: 0 } }),
-    Order.find({}).sort({ createdAt: -1 }).limit(6).lean()
+    Order.find({}).sort({ createdAt: -1 }).limit(6).lean(),
+    Order.aggregate([
+      {
+        $facet: {
+          // 1. Status breakdown across all orders
+          statusCounts: [
+            {
+              $group: {
+                _id: '$status',
+                count: { $sum: 1 }
+              }
+            }
+          ],
+          // 2. Qualifying orders totals
+          qualifyingTotals: [
+            {
+              $match: {
+                status: { $nin: ['Cancelled', 'Refunded'] }
+              }
+            },
+            {
+              $project: {
+                grandTotal: { $ifNull: ['$grandTotal', 0] },
+                totalCost: { $ifNull: ['$totalCost', 0] },
+                itemsQuantity: {
+                  $reduce: {
+                    input: { $ifNull: ['$items', []] },
+                    initialValue: 0,
+                    in: { $add: ['$$value', { $ifNull: ['$$this.quantity', 0] }] }
+                  }
+                }
+              }
+            },
+            {
+              $group: {
+                _id: null,
+                totalRevenue: { $sum: '$grandTotal' },
+                totalCostOfGoods: { $sum: '$totalCost' },
+                totalProductsSold: { $sum: '$itemsQuantity' },
+                qualifyingOrderCount: { $sum: 1 }
+              }
+            }
+          ],
+          // 3. Today's qualifying orders
+          todayTotals: [
+            {
+              $match: {
+                status: { $nin: ['Cancelled', 'Refunded'] },
+                createdAt: { $gte: startOfToday }
+              }
+            },
+            {
+              $project: {
+                grandTotal: { $ifNull: ['$grandTotal', 0] },
+                itemsQuantity: {
+                  $reduce: {
+                    input: { $ifNull: ['$items', []] },
+                    initialValue: 0,
+                    in: { $add: ['$$value', { $ifNull: ['$$this.quantity', 0] }] }
+                  }
+                }
+              }
+            },
+            {
+              $group: {
+                _id: null,
+                todaySales: { $sum: '$grandTotal' },
+                productsSoldToday: { $sum: '$itemsQuantity' }
+              }
+            }
+          ],
+          // 4. Monthly totals for the last 6 months
+          monthlyTotals: [
+            {
+              $match: {
+                status: { $nin: ['Cancelled', 'Refunded'] },
+                createdAt: { $gte: startOfSixMonthsAgo }
+              }
+            },
+            {
+              $group: {
+                _id: {
+                  year: { $year: '$createdAt' },
+                  month: { $month: '$createdAt' }
+                },
+                amount: { $sum: '$grandTotal' },
+                orders: { $sum: 1 }
+              }
+            }
+          ],
+          // 5. Best selling products (top 5 by units sold)
+          bestSellingProducts: [
+            {
+              $match: {
+                status: { $nin: ['Cancelled', 'Refunded'] }
+              }
+            },
+            { $unwind: '$items' },
+            {
+              $group: {
+                _id: {
+                  $ifNull: [
+                    '$items.productId',
+                    { $toString: '$items.product' }
+                  ]
+                },
+                name: { $first: '$items.name' },
+                brand: { $first: '$items.brand' },
+                category: { $first: '$items.category' },
+                image: { $first: '$items.image' },
+                unitsSold: { $sum: { $ifNull: ['$items.quantity', 0] } },
+                revenue: {
+                  $sum: {
+                    $multiply: [
+                      { $ifNull: ['$items.price', 0] },
+                      { $ifNull: ['$items.quantity', 0] }
+                    ]
+                  }
+                }
+              }
+            },
+            { $sort: { unitsSold: -1 } },
+            { $limit: 5 },
+            {
+              $project: {
+                _id: 0,
+                id: '$_id',
+                name: 1,
+                brand: 1,
+                category: 1,
+                image: 1,
+                unitsSold: 1,
+                revenue: 1
+              }
+            }
+          ],
+          // 6. Category and brand sales breakdown
+          itemSales: [
+            {
+              $match: {
+                status: { $nin: ['Cancelled', 'Refunded'] }
+              }
+            },
+            { $unwind: '$items' },
+            {
+              $group: {
+                _id: {
+                  category: { $toLower: { $ifNull: ['$items.category', 'iphone'] } },
+                  brand: { $toLower: { $ifNull: ['$items.brand', 'other'] } }
+                },
+                brandName: { $first: { $ifNull: ['$items.brand', 'Other'] } },
+                revenue: {
+                  $sum: {
+                    $multiply: [
+                      { $ifNull: ['$items.price', 0] },
+                      { $ifNull: ['$items.quantity', 0] }
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    ])
   ]);
 
-  // Qualifying orders: exclude Cancelled / Refunded
-  const qualifyingOrders = allOrders.filter(
-    (o) => o.status !== 'Cancelled' && o.status !== 'Refunded'
-  );
-  const qualifyingTodayOrders = todayOrders.filter(
-    (o) => o.status !== 'Cancelled' && o.status !== 'Refunded'
-  );
+  const statusCounts = aggregationResults?.statusCounts || [];
+  const statusMap = new Map(statusCounts.map((s) => [s._id, s.count]));
+  const totalOrders = statusCounts.reduce((sum, s) => sum + s.count, 0);
 
-  // Totals
-  const totalRevenue = qualifyingOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
-  const todaySales = qualifyingTodayOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
+  const pendingCount = (statusMap.get('Processing') || 0) + (statusMap.get('Pending') || 0);
+  const shippedCount = statusMap.get('Shipped') || 0;
+  const deliveredCount = statusMap.get('Delivered') || 0;
+  const cancelledCount = statusMap.get('Cancelled') || 0;
 
-  const totalCostOfGoods = qualifyingOrders.reduce((sum, o) => sum + (o.totalCost || 0), 0);
+  const qualifying = aggregationResults?.qualifyingTotals?.[0] || {};
+  const totalRevenue = qualifying.totalRevenue || 0;
+  const totalCostOfGoods = qualifying.totalCostOfGoods || 0;
+  const totalProductsSold = qualifying.totalProductsSold || 0;
+  const qualifyingOrderCount = qualifying.qualifyingOrderCount || 0;
   const grossProfit = totalRevenue - totalCostOfGoods;
 
-  const productsSoldToday = qualifyingTodayOrders.reduce((sum, o) => {
-    return sum + (o.items || []).reduce((itemSum, item) => itemSum + (item.quantity || 0), 0);
-  }, 0);
+  const today = aggregationResults?.todayTotals?.[0] || {};
+  const todaySales = today.todaySales || 0;
+  const productsSoldToday = today.productsSoldToday || 0;
 
-  const totalProductsSold = qualifyingOrders.reduce((sum, o) => {
-    return sum + (o.items || []).reduce((itemSum, item) => itemSum + (item.quantity || 0), 0);
-  }, 0);
-
-  // Status breakdown
-  const pendingCount = allOrders.filter(
-    (o) => o.status === 'Processing' || o.status === 'Pending'
-  ).length;
-  const shippedCount = allOrders.filter((o) => o.status === 'Shipped').length;
-  const deliveredCount = allOrders.filter((o) => o.status === 'Delivered').length;
-  const cancelledCount = allOrders.filter((o) => o.status === 'Cancelled').length;
-
-  // Best-selling products aggregation
-  const productSalesMap = {};
-  for (const ord of qualifyingOrders) {
-    for (const item of ord.items || []) {
-      const pid = item.productId || item.product?.toString();
-      if (!productSalesMap[pid]) {
-        productSalesMap[pid] = {
-          id: pid,
-          name: item.name,
-          brand: item.brand,
-          category: item.category,
-          image: item.image,
-          unitsSold: 0,
-          revenue: 0
-        };
-      }
-      productSalesMap[pid].unitsSold += item.quantity || 0;
-      productSalesMap[pid].revenue += (item.price || 0) * (item.quantity || 0);
-    }
-  }
-
-  const bestSellingProducts = Object.values(productSalesMap)
-    .sort((a, b) => b.unitsSold - a.unitsSold)
-    .slice(0, 5);
+  const bestSellingProducts = aggregationResults?.bestSellingProducts || [];
 
   // Monthly breakdown for visual charts (last 6 months)
   const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const now = new Date();
+  const monthlyTotals = aggregationResults?.monthlyTotals || [];
   const monthlyData = [];
 
   for (let i = 5; i >= 0; i--) {
@@ -90,29 +222,27 @@ export async function getDashboardMetrics() {
     const y = d.getFullYear();
     const mName = monthNames[mIndex];
 
-    const nextMonth = new Date(y, mIndex + 1, 1);
+    const match = monthlyTotals.find(
+      (m) => m._id && m._id.year === y && m._id.month === mIndex + 1
+    );
 
-    const mOrders = qualifyingOrders.filter((o) => {
-      const ordDate = new Date(o.createdAt);
-      return ordDate >= d && ordDate < nextMonth;
-    });
-
-    const mSales = mOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0);
+    const mSales = match?.amount || 0;
+    const mOrders = match?.orders || 0;
 
     monthlyData.push({
       month: i === 0 ? `${mName} (Current)` : mName,
       amount: mSales,
-      orders: mOrders.length
+      orders: mOrders
     });
   }
 
-  // Calculate chart heights (proportional 0 to 100)
+  // Calculate chart heights (proportional 15 to 100)
   const maxMonthlySales = Math.max(...monthlyData.map((m) => m.amount), 1);
   monthlyData.forEach((m) => {
     m.height = Math.max(15, Math.round((m.amount / maxMonthlySales) * 100));
   });
 
-  // Category breakdown
+  // Category and Brand breakdown
   const categoryRevenue = {
     iphone: 0,
     samsung: 0,
@@ -122,25 +252,25 @@ export async function getDashboardMetrics() {
   };
   const brandRevenue = new Map();
 
-  qualifyingOrders.forEach((ord) => {
-    ord.items?.forEach((item) => {
-      const cat = (item.category || 'iphone').toLowerCase();
-      const itemRev = (item.price || 0) * (item.quantity || 0);
-      if (categoryRevenue[cat] !== undefined) {
-        categoryRevenue[cat] += itemRev;
-      } else {
-        categoryRevenue.accessories += itemRev;
-      }
+  for (const entry of aggregationResults?.itemSales || []) {
+    const cat = (entry._id?.category || 'iphone').toLowerCase();
+    const rev = entry.revenue || 0;
 
-      const brandKey = (item.brand || 'Other').trim().toLowerCase() || 'other';
-      const existingBrand = brandRevenue.get(brandKey);
-      brandRevenue.set(brandKey, {
-        key: brandKey,
-        name: existingBrand?.name || item.brand?.trim() || 'Other',
-        amount: (existingBrand?.amount || 0) + itemRev
-      });
+    if (categoryRevenue[cat] !== undefined) {
+      categoryRevenue[cat] += rev;
+    } else {
+      categoryRevenue.accessories += rev;
+    }
+
+    const brandKey = (entry._id?.brand || 'other').trim().toLowerCase() || 'other';
+    const brandName = entry.brandName || 'Other';
+    const existingBrand = brandRevenue.get(brandKey);
+    brandRevenue.set(brandKey, {
+      key: brandKey,
+      name: existingBrand?.name || brandName,
+      amount: (existingBrand?.amount || 0) + rev
     });
-  });
+  }
 
   const totalCatRevenue = Object.values(categoryRevenue).reduce((a, b) => a + b, 0) || 1;
   const totalBrandRevenue = [...brandRevenue.values()].reduce((total, brand) => total + brand.amount, 0) || 1;
@@ -164,7 +294,7 @@ export async function getDashboardMetrics() {
   return {
     todaySales,
     totalRevenue,
-    totalOrders: allOrders.length,
+    totalOrders,
     pendingOrders: pendingCount,
     shippedOrders: shippedCount,
     completedOrders: deliveredCount,
@@ -175,7 +305,7 @@ export async function getDashboardMetrics() {
     lowStockProducts,
     outOfStockProducts,
     grossProfit,
-    averageOrderValue: qualifyingOrders.length > 0 ? Math.round(totalRevenue / qualifyingOrders.length) : 0,
+    averageOrderValue: qualifyingOrderCount > 0 ? Math.round(totalRevenue / qualifyingOrderCount) : 0,
     recentOrders: recentOrdersList.map((order) => ({
       ...order,
       id: order.orderNumber

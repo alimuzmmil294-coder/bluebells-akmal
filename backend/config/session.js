@@ -6,9 +6,10 @@ dotenv.config();
 
 export function getSessionSecret() {
   if (process.env.SESSION_SECRET) return process.env.SESSION_SECRET;
-  return process.env.NODE_ENV === 'production'
-    ? ''
-    : 'bluebells_development_session_secret_only';
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('SESSION_SECRET environment variable is missing. It must be explicitly configured with at least 32 characters in production.');
+  }
+  return 'bluebells_development_session_secret_only';
 }
 
 export function createSessionMiddleware() {
