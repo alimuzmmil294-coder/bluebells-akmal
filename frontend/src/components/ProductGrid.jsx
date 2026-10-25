@@ -2,7 +2,35 @@ import React from 'react';
 import ProductCard from './ProductCard';
 import { PackageOpen } from 'lucide-react';
 
-export default function ProductGrid({ products, emptyMessage = "No smartphones or accessories found matching your criteria." }) {
+export default function ProductGrid({
+  products,
+  loading = false,
+  emptyMessage = "No smartphones or accessories found matching your criteria."
+}) {
+  if (loading) {
+    return (
+      <div className="product-grid">
+        {[1, 2, 3, 4].map((n) => (
+          <div
+            key={n}
+            style={{
+              height: '380px',
+              borderRadius: 'var(--radius-lg)',
+              backgroundColor: 'var(--bg-secondary)',
+              border: '1px solid var(--border-color)',
+              opacity: 0.6,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}
+          >
+            <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Loading inventory...</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   if (!products || products.length === 0) {
     return (
       <div

@@ -2,8 +2,7 @@ import http from 'node:http';
 import dotenv from 'dotenv';
 import app from './app.js';
 import { connectDB } from './config/db.js';
-import { seedDatabase } from './scripts/seed.js';
-import Product from './models/Product.js';
+import { ensureAdminAndSettings } from './scripts/seed.js';
 
 dotenv.config();
 
@@ -28,19 +27,9 @@ const startup = (async () => {
   await connectDB();
 
   try {
-    const { removeDemoSeedData } = await import('./services/demoDataCleanup.js');
-    await removeDemoSeedData();
-  } catch (cleanupErr) {
-    console.warn('[Server] Demo cleanup error:', cleanupErr.message);
-  }
-
-  try {
-    const count = await Product.countDocuments({});
-    if (count === 0) {
-      await seedDatabase();
-    }
-  } catch (seedingError) {
-    console.warn('[Server] Seed check failed:', seedingError.message);
+    await ensureAdminAndSettings();
+  } catch (initErr) {
+    console.warn('[Server] Master Admin and Settings initialization failed:', initErr.message);
   }
 })();
 

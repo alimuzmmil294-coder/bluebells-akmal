@@ -7,7 +7,7 @@ import Breadcrumbs from '../components/Breadcrumbs';
 import Pagination from '../components/Pagination';
 
 export default function Samsung() {
-  const { products } = useStore();
+  const { products, productsLoading } = useStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSeries, setSelectedSeries] = useState('All');
   const [sortBy, setSortBy] = useState('featured');
@@ -186,6 +186,7 @@ export default function Samsung() {
         {/* Product Grid */}
         <ProductGrid
           products={paginatedSamsung}
+          loading={productsLoading}
           emptyMessage="No Samsung Galaxy devices match your search or filter. Try clearing filters."
         />
 

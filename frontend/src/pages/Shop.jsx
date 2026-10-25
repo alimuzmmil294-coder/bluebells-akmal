@@ -10,7 +10,7 @@ import Breadcrumbs from '../components/Breadcrumbs';
 import Pagination from '../components/Pagination';
 
 export default function Shop() {
-  const { products } = useStore();
+  const { products, productsLoading } = useStore();
   const [searchParams, setSearchParams] = useSearchParams();
 
   // URL query params
@@ -303,7 +303,7 @@ export default function Shop() {
             )}
 
             {/* Product Grid */}
-            <ProductGrid products={paginatedProducts} />
+            <ProductGrid products={paginatedProducts} loading={productsLoading} />
 
             {/* Pagination Controls */}
             <Pagination

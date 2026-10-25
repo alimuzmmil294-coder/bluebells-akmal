@@ -6,7 +6,9 @@
   "scripts": {
     "test": "node --test tests/api.test.js",
     "dev": "node --watch server.js",
-    "seed": "node scripts/seed.js"
+    "seed": "node scripts/seed.js",
+    "db:clear": "node scripts/clearDummyData.js",
+    "db:purge": "node scripts/purgeDummyData.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.0",

@@ -1,40 +1,48 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { INITIAL_PRODUCTS } from '../data/products';
 import { INITIAL_SETTINGS } from '../data/demoData';
 import { getStorageItem, setStorageItem } from '../utils/storage';
 import api from '../services/api';
 
+const CACHE_VERSION = 'bluebells_cache_v2_clean';
+// Immediately purge legacy dummy caches from previous sessions
+if (typeof window !== 'undefined') {
+  try {
+    const currentVersion = localStorage.getItem('bluebells_cache_version');
+    if (currentVersion !== CACHE_VERSION) {
+      localStorage.removeItem('bluebells_products');
+      localStorage.removeItem('bluebells_orders');
+      localStorage.removeItem('bluebells_customers');
+      localStorage.removeItem('bluebells_coupons');
+      localStorage.setItem('bluebells_cache_version', CACHE_VERSION);
+    }
+  } catch (e) {
+    // Ignore storage quota or access errors
+  }
+}
+
 const StoreContext = createContext(null);
 
 export function StoreProvider({ children }) {
-  // Products
-  const [products, setProducts] = useState(() => {
-    return getStorageItem('bluebells_products', INITIAL_PRODUCTS);
-  });
-  const [productsLoading, setProductsLoading] = useState(false);
+  // Products - initialized as empty array, populated strictly from backend database
+  const [products, setProducts] = useState([]);
+  const [productsLoading, setProductsLoading] = useState(true);
   const [productsPagination, setProductsPagination] = useState({
     page: 1,
     limit: 20,
-    total: products.length,
+    total: 0,
     totalPages: 1
   });
 
-  // Orders
-  const [orders, setOrders] = useState(() => {
-    return [];
-  });
+  // Orders - strictly database-backed
+  const [orders, setOrders] = useState([]);
 
-  // Customers
-  const [customers, setCustomers] = useState(() => {
-    return getStorageItem('bluebells_customers', []);
-  });
+  // Customers - strictly database-backed
+  const [customers, setCustomers] = useState([]);
 
-  // Coupons
-  const [coupons, setCoupons] = useState(() => {
-    return getStorageItem('bluebells_coupons', []);
-  });
+  // Coupons - strictly database-backed
+  const [coupons, setCoupons] = useState([]);
 
-  // Store Settings
+  // Store Settings (Storefront contact/address metadata from MongoDB)
   const [settings, setSettings] = useState(() => {
     const cached = getStorageItem('bluebells_settings', null);
     if (!cached || cached.storeAddress?.includes('Gulberg') || cached.supportPhone?.includes('1234567') || !cached.storeAddress?.includes('Peshawar')) {
@@ -71,19 +79,7 @@ export function StoreProvider({ children }) {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // Sync caches to LocalStorage for offline/fast-load fallback
-  useEffect(() => {
-    setStorageItem('bluebells_products', products);
-  }, [products]);
-
-  useEffect(() => {
-    setStorageItem('bluebells_customers', customers);
-  }, [customers]);
-
-  useEffect(() => {
-    setStorageItem('bluebells_coupons', coupons);
-  }, [coupons]);
-
+  // Sync settings cache for offline / instant render
   useEffect(() => {
     setStorageItem('bluebells_settings', settings);
   }, [settings]);

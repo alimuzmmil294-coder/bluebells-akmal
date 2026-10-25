@@ -7,7 +7,7 @@ import Breadcrumbs from '../components/Breadcrumbs';
 import Pagination from '../components/Pagination';
 
 export default function IPhone() {
-  const { products } = useStore();
+  const { products, productsLoading } = useStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStorage, setSelectedStorage] = useState('All');
   const [sortBy, setSortBy] = useState('featured');
@@ -181,6 +181,7 @@ export default function IPhone() {
         {/* Product Grid */}
         <ProductGrid
           products={paginatedIPhones}
+          loading={productsLoading}
           emptyMessage="No Apple iPhone models match your selected storage or query. Try clearing your filters."
         />
 

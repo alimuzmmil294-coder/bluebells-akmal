@@ -1,6 +1,5 @@
-import Product from './models/Product.js';
 import { connectDB } from './config/db.js';
-import { removeDemoSeedData } from './services/demoDataCleanup.js';
+import { ensureAdminAndSettings } from './scripts/seed.js';
 
 let bootstrapPromise;
 
@@ -20,12 +19,7 @@ export async function initializeBackend() {
       }
 
       await connectDB();
-      await removeDemoSeedData();
-
-      if (process.env.NODE_ENV !== 'production' && await Product.countDocuments() === 0) {
-        const { seedDatabase } = await import('./scripts/seed.js');
-        await seedDatabase();
-      }
+      await ensureAdminAndSettings();
     })();
   }
 

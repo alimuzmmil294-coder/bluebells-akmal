@@ -54,6 +54,8 @@ async function request(endpoint, options = {}) {
 }
 
 test.before(async () => {
+  const { seedDatabase } = await import('../scripts/seed.js');
+  await seedDatabase();
   await new Promise((resolve) => {
     testServer = server.listen(5001, () => {
       baseUrl = 'http://localhost:5001/api';

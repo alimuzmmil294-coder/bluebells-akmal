@@ -3,12 +3,13 @@ import { connectDB, disconnectDB } from '../config/db.js';
 import User from '../models/User.js';
 import Product from '../models/Product.js';
 import Coupon from '../models/Coupon.js';
+import Setting from '../models/Setting.js';
 import { removeDemoSeedData } from '../services/demoDataCleanup.js';
 import { recordDailySnapshot } from '../services/analyticsService.js';
 
 dotenv.config();
 
-const SEED_PRODUCTS = [
+export const SEED_PRODUCTS = [
   // --- APPLE IPHONE SERIES ---
   {
     customId: "iphone-17-pro-max",
@@ -579,7 +580,7 @@ const SEED_PRODUCTS = [
   }
 ];
 
-const SEED_COUPONS = [
+export const SEED_COUPONS = [
   {
     code: "BLUEBELLS10",
     discountType: "percentage",
@@ -609,43 +610,53 @@ const SEED_COUPONS = [
   }
 ];
 
+export async function ensureAdminAndSettings() {
+  await connectDB();
+  await removeDemoSeedData();
+
+  // 1. Seed or update Master Admin User
+  const adminEmail = process.env.ADMIN_EMAIL || (process.env.NODE_ENV === 'production' ? '' : 'admin@bluebells.pk');
+  const adminPassword = process.env.ADMIN_PASSWORD || (process.env.NODE_ENV === 'production' ? '' : 'adminpass');
+  if (adminEmail.trim() && adminPassword) {
+    const normalizedAdminEmail = adminEmail.toLowerCase().trim();
+    let adminUser = await User.findOne({ email: normalizedAdminEmail }).select('+password');
+    if (!adminUser) {
+      adminUser = await User.create({
+        name: process.env.ADMIN_NAME || 'BlueBells Master Admin',
+        email: normalizedAdminEmail,
+        password: adminPassword,
+        role: 'admin',
+        status: 'active',
+        phone: '03005902425',
+        address: 'Shop # 33, Sattagadai Plaza, 32 The Mall, Peshawar Cantt.',
+        city: 'Peshawar'
+      });
+      console.log(`[Admin] Created Master Administrator account: ${normalizedAdminEmail}`);
+    } else {
+      adminUser.role = 'admin';
+      adminUser.status = 'active';
+      if (!adminUser.password) {
+        adminUser.password = adminPassword;
+      }
+      await adminUser.save();
+      console.log(`[Admin] Administrator account verified: ${normalizedAdminEmail}`);
+    }
+  }
+
+  // 2. Ensure default store Settings singleton exists in database
+  const existingSetting = await Setting.findOne({ key: 'store_settings' });
+  if (!existingSetting) {
+    await Setting.create({ key: 'store_settings' });
+    console.log('[Setting] Created default store settings singleton in database.');
+  }
+}
+
 export async function seedDatabase() {
   console.log('[Seed] Connecting to MongoDB...');
   await connectDB();
 
-  await removeDemoSeedData();
-
-  // 1. Seed or update Admin User
-  const adminEmail = process.env.ADMIN_EMAIL || (process.env.NODE_ENV === 'production' ? '' : 'admin@bluebells.pk');
-  const adminPassword = process.env.ADMIN_PASSWORD || (process.env.NODE_ENV === 'production' ? '' : 'adminpass');
-  if (!adminEmail.trim() || !adminPassword) {
-    throw new Error('ADMIN_EMAIL and ADMIN_PASSWORD must be configured before production seeding.');
-  }
-  const normalizedAdminEmail = adminEmail.toLowerCase().trim();
-
-  let adminUser = await User.findOne({ email: normalizedAdminEmail }).select('+password');
-  if (!adminUser) {
-    adminUser = await User.create({
-      name: 'BlueBells Master Admin',
-      email: normalizedAdminEmail,
-      password: adminPassword,
-      role: 'admin',
-      status: 'active',
-      phone: '03005902425',
-      address: 'Shop # 33, Sattagadai Plaza, 32 The Mall, Peshawar Cantt.',
-      city: 'Peshawar'
-    });
-    console.log(`[Seed] Created Master Administrator account: ${normalizedAdminEmail}`);
-  } else {
-    adminUser.role = 'admin';
-    adminUser.status = 'active';
-    // Preserve existing admin password if already set
-    if (!adminUser.password) {
-      adminUser.password = adminPassword;
-    }
-    await adminUser.save();
-    console.log(`[Seed] Administrator account verified: ${normalizedAdminEmail}`);
-  }
+  // 1. Ensure Master Admin & Settings
+  await ensureAdminAndSettings();
 
   // 2. Seed Products idempotently
   console.log('[Seed] Seeding Apple & Samsung product catalog...');

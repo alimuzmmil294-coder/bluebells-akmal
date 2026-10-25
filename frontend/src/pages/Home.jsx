@@ -21,7 +21,7 @@ import HeroCarousel from '../components/HeroCarousel';
 import HeroMarquee from '../components/HeroMarquee';
 
 export default function Home() {
-  const { products } = useStore();
+  const { products, productsLoading } = useStore();
   const [videoModalOpen, setVideoModalOpen] = useState(false);
 
   // Filter featured & bestselling
@@ -75,7 +75,7 @@ export default function Home() {
             </Link>
           </div>
 
-          <ProductGrid products={featuredProducts} />
+          <ProductGrid products={featuredProducts} loading={productsLoading} />
         </div>
       </section>
 
@@ -195,7 +195,7 @@ export default function Home() {
             </Link>
           </div>
 
-          <ProductGrid products={bestSellers} />
+          <ProductGrid products={bestSellers} loading={productsLoading} />
         </div>
       </section>
 
@@ -214,7 +214,7 @@ export default function Home() {
             </Link>
           </div>
 
-          <ProductGrid products={accessories} />
+          <ProductGrid products={accessories} loading={productsLoading} />
         </div>
       </section>
 
