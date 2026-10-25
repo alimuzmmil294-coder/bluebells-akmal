@@ -131,7 +131,7 @@ app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cookieParser());
 
 // Static uploads serving
-app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
+app.use(["/uploads", "/api/uploads"], express.static(path.join(process.cwd(), "uploads")));
 
 app.use((req, res, next) => {
   res.setHeader("Vary", "Origin");

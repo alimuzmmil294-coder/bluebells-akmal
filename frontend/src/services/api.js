@@ -1,7 +1,13 @@
-const defaultBaseUrl = import.meta.env.DEV ? '/api' : 'https://bluebells-akmal.vercel.app/api';
-const BASE_URL = (
-  import.meta.env.VITE_API_URL || defaultBaseUrl
-).replace(/\/+$/, '');
+// Use '/api' as canonical base URL:
+// - In dev: Vite dev server proxies '/api' to http://127.0.0.1:5000 (vite.config.js)
+// - In prod: Vercel edge proxies '/api/:path*' to https://bluebells-akmal.vercel.app/api/:path* (vercel.json)
+// Explicit VITE_API_URL (e.g. direct https://bluebells-akmal.vercel.app/api) is respected when provided.
+const rawApiUrl = (import.meta.env.VITE_API_URL || '').trim().replace(
+  'https://bluebells-backend.vercel.app',
+  'https://bluebells-akmal.vercel.app'
+);
+const defaultBaseUrl = '/api';
+const BASE_URL = (rawApiUrl || defaultBaseUrl).replace(/\/+$/, '');
 
 async function request(endpoint, options = {}) {
   const url = `${BASE_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;

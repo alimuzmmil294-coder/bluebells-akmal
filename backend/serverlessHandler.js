@@ -12,7 +12,7 @@ export default async function handler(req, res) {
     });
   }
 
-  if (req.url && !req.url.startsWith('/api') && req.url !== '/') {
+  if (req.url && !req.url.startsWith('/api') && !req.url.startsWith('/uploads') && req.url !== '/') {
     req.url = '/api' + (req.url.startsWith('/') ? req.url : '/' + req.url);
   }
 
