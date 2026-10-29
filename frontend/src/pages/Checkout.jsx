@@ -8,7 +8,7 @@ import Breadcrumbs from '../components/Breadcrumbs';
 
 export default function Checkout() {
   const { cartItems, totals, clearCart, cartLoading, appliedCouponCode } = useCart();
-  const { currentUser, createOrder, addToast, settings } = useStore();
+  const { currentUser, createOrder, addToast, settings, products } = useStore();
   const navigate = useNavigate();
 
   // Shipping Form State
@@ -83,10 +83,23 @@ export default function Checkout() {
     }
   };
 
+  const stockConflict = cartItems.find((item) => {
+    const prod = products?.find((p) => String(p.id) === String(item.id) || String(p.id) === String(item.productId));
+    const availableStock = prod ? prod.stock : (typeof item.stock === 'number' ? item.stock : Infinity);
+    return typeof availableStock === 'number' && item.quantity > availableStock;
+  });
+
   const handlePlaceOrder = async (e) => {
     e.preventDefault();
     if (!validate()) {
       addToast('Please complete all required shipping fields', 'error');
+      return;
+    }
+
+    if (stockConflict) {
+      const prod = products?.find((p) => String(p.id) === String(stockConflict.id) || String(p.id) === String(stockConflict.productId));
+      const available = prod ? prod.stock : (typeof stockConflict.stock === 'number' ? stockConflict.stock : 0);
+      addToast(`Cannot place order: "${stockConflict.name}" has only ${available} units available in stock. Please adjust quantity.`, 'error');
       return;
     }
 
@@ -418,15 +431,41 @@ export default function Checkout() {
                 </div>
               </div>
 
+              {/* Stock Conflict Warning */}
+              {stockConflict && (
+                <div
+                  style={{
+                    backgroundColor: '#FEF2F2',
+                    border: '1px solid #F87171',
+                    borderRadius: 'var(--radius-md)',
+                    padding: '12px 14px',
+                    marginBottom: '16px',
+                    fontSize: '0.85rem',
+                    color: '#B91C1C',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px'
+                  }}
+                >
+                  <ShieldAlert size={16} style={{ flexShrink: 0 }} />
+                  <span>Some items exceed available stock. Return to cart to adjust quantities.</span>
+                </div>
+              )}
+
               {/* Submit Button */}
               <button
                 type="submit"
-                disabled={isSubmitting}
+                disabled={isSubmitting || Boolean(stockConflict)}
                 className="btn btn-primary btn-block btn-lg"
-                style={{ width: '100%', marginBottom: '14px' }}
+                style={{
+                  width: '100%',
+                  marginBottom: '14px',
+                  opacity: stockConflict ? 0.6 : 1,
+                  cursor: stockConflict ? 'not-allowed' : 'pointer'
+                }}
               >
                 <Lock size={18} />
-                <span>{isSubmitting ? 'Placing Order...' : 'Place Order'}</span>
+                <span>{isSubmitting ? 'Placing Order...' : stockConflict ? 'Insufficient Stock' : 'Place Order'}</span>
               </button>
 
               <Link

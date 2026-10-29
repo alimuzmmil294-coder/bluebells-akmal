@@ -7,7 +7,7 @@ import { useWishlist } from '../context/WishlistContext';
 
 export default function ProductCard({ product }) {
   const [imageError, setImageError] = useState(false);
-  const { addToCart } = useCart();
+  const { addToCart, cartItems } = useCart();
   const { isInWishlist, toggleWishlist } = useWishlist();
 
   if (!product) return null;
@@ -15,9 +15,18 @@ export default function ProductCard({ product }) {
   const inWishlist = isInWishlist(product.id);
   const discount = calculateDiscount(product.price, product.originalPrice);
 
+  const availableStock = typeof product.stock === 'number' ? product.stock : Infinity;
+  const inCartQty = cartItems
+    ?.filter((i) => i.productId === product.id || i.id === product.id)
+    .reduce((sum, i) => sum + i.quantity, 0) || 0;
+  const isOutOfStock = availableStock === 0;
+  const isMaxInCart = availableStock > 0 && inCartQty >= availableStock;
+
   const handleQuickAdd = (e) => {
     e.preventDefault();
     e.stopPropagation();
+    if (isOutOfStock || isMaxInCart) return;
+
     const defaultVariant = product.variants
       ?.filter((variant) => variant.ptaStatus !== 'Non-PTA')
       .sort((a, b) => a.price - b.price)[0];
@@ -71,16 +80,19 @@ export default function ProductCard({ product }) {
       <div className="product-card-body">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
           <span className="product-card-brand">{product.brand}</span>
-          {product.stock <= 5 && product.stock > 0 && (
-            <span style={{ fontSize: '0.72rem', color: '#D97706', fontWeight: 600 }}>
-              Only {product.stock} left
-            </span>
-          )}
-          {product.stock === 0 && (
+          {isOutOfStock ? (
             <span style={{ fontSize: '0.72rem', color: '#DC2626', fontWeight: 600 }}>
               Out of stock
             </span>
-          )}
+          ) : isMaxInCart ? (
+            <span style={{ fontSize: '0.72rem', color: '#DC2626', fontWeight: 600 }}>
+              Max in cart
+            </span>
+          ) : product.stock <= 5 && product.stock > 0 ? (
+            <span style={{ fontSize: '0.72rem', color: '#D97706', fontWeight: 600 }}>
+              Only {product.stock} left
+            </span>
+          ) : null}
         </div>
 
         <h3 className="product-card-title">
@@ -134,9 +146,13 @@ export default function ProductCard({ product }) {
           <button
             onClick={handleQuickAdd}
             className="product-card-add-btn"
-            title="Quick Add to Cart"
+            title={isOutOfStock ? "Out of Stock" : isMaxInCart ? `Maximum quantity in cart (${product.stock} in stock)` : "Quick Add to Cart"}
             aria-label="Add to cart"
-            disabled={product.stock === 0}
+            disabled={isOutOfStock || isMaxInCart}
+            style={{
+              opacity: (isOutOfStock || isMaxInCart) ? 0.5 : 1,
+              cursor: (isOutOfStock || isMaxInCart) ? 'not-allowed' : 'pointer'
+            }}
           >
             <ShoppingBag size={18} />
           </button>

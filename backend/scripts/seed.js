@@ -621,17 +621,25 @@ export async function ensureAdminAndSettings() {
     const normalizedAdminEmail = adminEmail.toLowerCase().trim();
     let adminUser = await User.findOne({ email: normalizedAdminEmail }).select('+password');
     if (!adminUser) {
-      adminUser = await User.create({
-        name: process.env.ADMIN_NAME || 'BlueBells Master Admin',
-        email: normalizedAdminEmail,
-        password: adminPassword,
-        role: 'admin',
-        status: 'active',
-        phone: '03005902425',
-        address: 'Shop # 33, Sattagadai Plaza, 32 The Mall, Peshawar Cantt.',
-        city: 'Peshawar'
-      });
-      console.log(`[Admin] Created Master Administrator account: ${normalizedAdminEmail}`);
+      try {
+        adminUser = await User.create({
+          name: process.env.ADMIN_NAME || 'BlueBells Master Admin',
+          email: normalizedAdminEmail,
+          password: adminPassword,
+          role: 'admin',
+          status: 'active',
+          phone: '03005902425',
+          address: 'Shop # 33, Sattagadai Plaza, 32 The Mall, Peshawar Cantt.',
+          city: 'Peshawar'
+        });
+        console.log(`[Admin] Created Master Administrator account: ${normalizedAdminEmail}`);
+      } catch (createErr) {
+        if (createErr.code === 11000) {
+          console.log(`[Admin] Administrator account already created: ${normalizedAdminEmail}`);
+        } else {
+          throw createErr;
+        }
+      }
     } else {
       adminUser.role = 'admin';
       adminUser.status = 'active';
@@ -646,8 +654,12 @@ export async function ensureAdminAndSettings() {
   // 2. Ensure default store Settings singleton exists in database
   const existingSetting = await Setting.findOne({ key: 'store_settings' });
   if (!existingSetting) {
-    await Setting.create({ key: 'store_settings' });
-    console.log('[Setting] Created default store settings singleton in database.');
+    try {
+      await Setting.create({ key: 'store_settings' });
+      console.log('[Setting] Created default store settings singleton in database.');
+    } catch (createErr) {
+      if (createErr.code !== 11000) throw createErr;
+    }
   }
 }
 

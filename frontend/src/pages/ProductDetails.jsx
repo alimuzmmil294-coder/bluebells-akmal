@@ -26,7 +26,7 @@ export default function ProductDetails() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { products, loading: productsLoading, addToast } = useStore();
-  const { addToCart } = useCart();
+  const { addToCart, cartItems } = useCart();
   const { isInWishlist, toggleWishlist } = useWishlist();
 
   const product = products.find((p) => p.id === id);
@@ -124,12 +124,25 @@ export default function ProductDetails() {
   const selectedOriginalPrice = selectedVariant?.originalPrice || product.originalPrice;
   const discount = calculateDiscount(selectedPrice, selectedOriginalPrice);
 
+  const availableStock = typeof product.stock === 'number' ? product.stock : Infinity;
+  const currentCartItemId = `${product.id}_${selectedStorage}_${selectedVariant?.ptaStatus || selectedPtaStatus}_${selectedColor?.name || 'Default'}`.replace(/\s+/g, '-');
+  const inCartQty = cartItems?.find(
+    (i) => i.cartItemId === currentCartItemId || (i.productId === product.id && i.storage === selectedStorage && i.color === selectedColor?.name && i.ptaStatus === (selectedVariant?.ptaStatus || selectedPtaStatus))
+  )?.quantity || 0;
+  const isOutOfStock = availableStock === 0;
+  const isMaxInCart = availableStock > 0 && inCartQty >= availableStock;
+
   const handleAddToCart = async () => {
+    if (isOutOfStock || isMaxInCart) return;
+    const maxPermitted = availableStock - inCartQty;
+    const qtyToAdd = Math.min(quantity, maxPermitted);
+    if (qtyToAdd <= 0) return;
+
     setAddedAnim(true);
     setTimeout(() => setAddedAnim(false), 2400);
     await addToCart(
       product,
-      quantity,
+      qtyToAdd,
       selectedStorage,
       selectedColor?.name,
       selectedColor?.hex,
@@ -138,9 +151,14 @@ export default function ProductDetails() {
   };
 
   const handleBuyNow = async () => {
+    if (isOutOfStock || isMaxInCart) return;
+    const maxPermitted = availableStock - inCartQty;
+    const qtyToAdd = Math.min(quantity, maxPermitted);
+    if (qtyToAdd <= 0) return;
+
     const added = await addToCart(
       product,
-      quantity,
+      qtyToAdd,
       selectedStorage,
       selectedColor?.name,
       selectedColor?.hex,
@@ -210,9 +228,12 @@ export default function ProductDetails() {
               <img
                 src={selectedImage || product.image}
                 alt={product.name}
+                className="product-stage-main-image"
                 style={{
                   maxHeight: '340px',
                   maxWidth: '100%',
+                  width: 'auto',
+                  height: 'auto',
                   objectFit: 'contain',
                   filter: 'drop-shadow(0 15px 25px rgba(0,0,0,0.1))',
                   transition: 'transform 0.25s ease'
@@ -412,6 +433,23 @@ export default function ProductDetails() {
               </div>
             )}
 
+            {/* Inventory Status Message */}
+            <div style={{ marginBottom: '14px' }}>
+              {isOutOfStock ? (
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: '#DC2626', fontWeight: 700, fontSize: '0.92rem' }}>
+                  <span>Out of Stock</span>
+                </div>
+              ) : isMaxInCart ? (
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: '#DC2626', fontWeight: 700, fontSize: '0.88rem' }}>
+                  <span>Maximum available quantity reached ({availableStock} in cart)</span>
+                </div>
+              ) : availableStock <= 5 && availableStock > 0 ? (
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: '#D97706', fontWeight: 700, fontSize: '0.9rem' }}>
+                  <span>Only {availableStock} units available</span>
+                </div>
+              ) : null}
+            </div>
+
             {/* Quantity Selector & Primary CTAs */}
             <div className="product-actions-group">
               {/* Stepper */}
@@ -419,18 +457,34 @@ export default function ProductDetails() {
                 <button
                   type="button"
                   onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-                  style={{ padding: '0 14px', background: 'none', border: 'none', cursor: 'pointer', height: '100%' }}
+                  disabled={quantity <= 1 || isOutOfStock || isMaxInCart}
+                  style={{
+                    padding: '0 14px',
+                    background: 'none',
+                    border: 'none',
+                    cursor: (quantity <= 1 || isOutOfStock || isMaxInCart) ? 'not-allowed' : 'pointer',
+                    opacity: (quantity <= 1 || isOutOfStock || isMaxInCart) ? 0.3 : 1,
+                    height: '100%'
+                  }}
                   aria-label="Decrease quantity"
                 >
                   <Minus size={16} />
                 </button>
                 <span style={{ fontWeight: 800, fontSize: '1rem', minWidth: '32px', textAlign: 'center' }}>
-                  {quantity}
+                  {isOutOfStock ? 0 : quantity}
                 </span>
                 <button
                   type="button"
-                  onClick={() => setQuantity((q) => q + 1)}
-                  style={{ padding: '0 14px', background: 'none', border: 'none', cursor: 'pointer', height: '100%' }}
+                  onClick={() => setQuantity((q) => Math.min(Math.max(1, availableStock - inCartQty), q + 1))}
+                  disabled={isOutOfStock || isMaxInCart || quantity >= (availableStock - inCartQty)}
+                  style={{
+                    padding: '0 14px',
+                    background: 'none',
+                    border: 'none',
+                    cursor: (isOutOfStock || isMaxInCart || quantity >= (availableStock - inCartQty)) ? 'not-allowed' : 'pointer',
+                    opacity: (isOutOfStock || isMaxInCart || quantity >= (availableStock - inCartQty)) ? 0.3 : 1,
+                    height: '100%'
+                  }}
                   aria-label="Increase quantity"
                 >
                   <Plus size={16} />
@@ -441,11 +495,20 @@ export default function ProductDetails() {
               <button
                 type="button"
                 onClick={handleAddToCart}
-                disabled={product.stock === 0}
+                disabled={isOutOfStock || isMaxInCart}
                 className={`btn btn-primary btn-lg product-add-btn ${addedAnim ? 'btn-added' : ''}`}
-                style={{ flex: '1 1 180px', gap: '10px' }}
+                style={{
+                  flex: '1 1 180px',
+                  gap: '10px',
+                  cursor: (isOutOfStock || isMaxInCart) ? 'not-allowed' : 'pointer',
+                  opacity: (isOutOfStock || isMaxInCart) ? 0.5 : 1
+                }}
               >
-                {addedAnim ? (
+                {isOutOfStock ? (
+                  <span>Out of Stock</span>
+                ) : isMaxInCart ? (
+                  <span>Max In Cart</span>
+                ) : addedAnim ? (
                   <>
                     <Check size={20} />
                     <span>Added to Cart!</span>
@@ -462,9 +525,14 @@ export default function ProductDetails() {
               <button
                 type="button"
                 onClick={handleBuyNow}
-                disabled={product.stock === 0}
+                disabled={isOutOfStock || isMaxInCart}
                 className="btn btn-dark btn-lg product-buy-now-btn"
-                style={{ flex: '1 1 160px', gap: '10px' }}
+                style={{
+                  flex: '1 1 160px',
+                  gap: '10px',
+                  cursor: (isOutOfStock || isMaxInCart) ? 'not-allowed' : 'pointer',
+                  opacity: (isOutOfStock || isMaxInCart) ? 0.5 : 1
+                }}
               >
                 <Zap size={20} color="#FFFFFF" />
                 <span>Buy Now</span>
@@ -797,6 +865,16 @@ export default function ProductDetails() {
           .product-buy-box {
             position: static !important;
           }
+          .product-stage-image-frame {
+            min-height: 320px !important;
+            padding: 24px 20px !important;
+          }
+          .product-stage-main-image {
+            max-height: 270px !important;
+            max-width: 100% !important;
+            height: auto !important;
+            object-fit: contain !important;
+          }
         }
         @media (max-width: 640px) {
           .product-trust-assurances {
@@ -823,8 +901,15 @@ export default function ProductDetails() {
         }
         @media (max-width: 520px) {
           .product-stage-image-frame {
-            min-height: 280px !important;
-            padding: 24px 16px !important;
+            min-height: 240px !important;
+            padding: 16px 12px !important;
+          }
+          .product-stage-main-image {
+            max-height: 210px !important;
+            max-width: 100% !important;
+            width: auto !important;
+            height: auto !important;
+            object-fit: contain !important;
           }
           .product-actions-group {
             flex-direction: column;

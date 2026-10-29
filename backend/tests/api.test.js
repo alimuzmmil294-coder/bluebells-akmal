@@ -9,7 +9,7 @@ dotenv.config();
 process.env.NODE_ENV = 'test';
 process.env.PORT = '5001';
 
-const { app, server } = await import('../server.js');
+const { app, server, startup } = await import('../server.js');
 const { default: User } = await import('../models/User.js');
 const { default: Product } = await import('../models/Product.js');
 const { default: Order } = await import('../models/Order.js');
@@ -54,6 +54,9 @@ async function request(endpoint, options = {}) {
 }
 
 test.before(async () => {
+  if (startup) {
+    await startup.catch(() => {});
+  }
   const { seedDatabase } = await import('../scripts/seed.js');
   await seedDatabase();
   await new Promise((resolve) => {
@@ -830,5 +833,195 @@ test('17. Store Settings: Public GET and Admin-protected PUT persist in database
   const updatedGet = await request('/settings');
   assert.equal(updatedGet.status, 200);
   assert.equal(updatedGet.data.data.storeName, 'BlueBells Flagship Peshawar');
+});
+
+test('18. BUG 1: Stock Limit Enforcement in Cart and Checkout', async () => {
+  // Create a product with strictly 5 units in stock
+  const limitedCustomId = `stock-limited-${Date.now()}`;
+  const prodRes = await request('/products', {
+    method: 'POST',
+    headers: { Cookie: adminCookie },
+    body: {
+      customId: limitedCustomId,
+      name: 'iPhone 18 Limited',
+      brand: 'Apple',
+      category: 'iphone',
+      price: 300000,
+      stock: 5,
+      image: 'https://images.example.com/iphone18.jpg'
+    }
+  });
+  assert.equal(prodRes.status, 201);
+
+  // Initialize a fresh cart session
+  const cartInit = await request('/cart');
+  const sessionCookie = cartInit.cookie ? cartInit.cookie.split(';')[0] : '';
+
+  // 1. Add 1 unit five times -> Quantity reaches 5
+  for (let i = 0; i < 5; i++) {
+    const addRes = await request('/cart/items', {
+      method: 'POST',
+      headers: { Cookie: sessionCookie },
+      body: { productId: limitedCustomId, quantity: 1 }
+    });
+    assert.equal(addRes.status, 200);
+    assert.equal(addRes.data.data.items.length, 1);
+  }
+
+  // Verify cart has quantity 5
+  const cartCheck = await request('/cart', { headers: { Cookie: sessionCookie } });
+  assert.equal(cartCheck.data.data.items.length, 1);
+  assert.equal(cartCheck.data.data.items[0].quantity, 5);
+  assert.equal(cartCheck.data.data.items[0].availableStock, 5);
+
+  // 2. Attempt to add a 6th unit -> Must be blocked with 400
+  const sixthAddRes = await request('/cart/items', {
+    method: 'POST',
+    headers: { Cookie: sessionCookie },
+    body: { productId: limitedCustomId, quantity: 1 }
+  });
+  assert.equal(sixthAddRes.status, 400);
+  assert.match(sixthAddRes.data.error || sixthAddRes.data.message, /Maximum available quantity reached|Only 5 units available/);
+
+  // 3. Attempt to increase quantity via PUT beyond stock -> Must be blocked
+  const cartItemId = cartCheck.data.data.items[0].cartItemId;
+  const updateOverLimit = await request(`/cart/items/${encodeURIComponent(cartItemId)}`, {
+    method: 'PUT',
+    headers: { Cookie: sessionCookie },
+    body: { delta: 1 }
+  });
+  assert.equal(updateOverLimit.status, 400);
+
+  // 4. Out of stock product (stock = 0) cannot be added
+  await Product.updateOne({ customId: limitedCustomId }, { stock: 0 });
+  const outOfStockAdd = await request('/cart/items', {
+    method: 'POST',
+    body: { productId: limitedCustomId, quantity: 1 }
+  });
+  assert.equal(outOfStockAdd.status, 400);
+  assert.match(outOfStockAdd.data.error || outOfStockAdd.data.message, /out of stock/i);
+
+  // 5. Checkout validation rejects orders exceeding stock
+  const overStockOrder = await request('/orders', {
+    method: 'POST',
+    body: {
+      customer: {
+        fullName: 'Stock Tester',
+        email: 'stocktest@example.com',
+        phone: '+92 300 1234567',
+        address: 'Test Street',
+        city: 'Lahore'
+      },
+      items: [{ id: limitedCustomId, quantity: 2 }]
+    }
+  });
+  assert.equal(overStockOrder.status, 400);
+  assert.match(overStockOrder.data.error || overStockOrder.data.message, /Insufficient stock/i);
+});
+
+test('19. BUG 2: Rapid concurrent Add to Cart requests eliminate duplicate entries', async () => {
+  // Create a product with 8 units in stock
+  const concurrentCustomId = `concurrent-prod-${Date.now()}`;
+  await request('/products', {
+    method: 'POST',
+    headers: { Cookie: adminCookie },
+    body: {
+      customId: concurrentCustomId,
+      name: 'Concurrent Test Device',
+      brand: 'Apple',
+      category: 'iphone',
+      price: 250000,
+      stock: 8,
+      image: 'https://images.example.com/concurrent.jpg'
+    }
+  });
+
+  // Fresh cart session
+  const cartInit = await request('/cart');
+  const sessionCookie = cartInit.cookie ? cartInit.cookie.split(';')[0] : '';
+
+  // Fire 10 simultaneous Add to Cart requests for the SAME product
+  const promises = [];
+  for (let i = 0; i < 10; i++) {
+    promises.push(
+      request('/cart/items', {
+        method: 'POST',
+        headers: { Cookie: sessionCookie },
+        body: { productId: concurrentCustomId, quantity: 1 }
+      })
+    );
+  }
+
+  const results = await Promise.all(promises);
+
+  // Fetch final cart state
+  const finalCart = await request('/cart', { headers: { Cookie: sessionCookie } });
+  assert.equal(finalCart.status, 200);
+
+  // Must have exactly ONE entry for this product in the cart
+  const matchingItems = finalCart.data.data.items.filter(
+    (item) => item.productId === concurrentCustomId
+  );
+  assert.equal(matchingItems.length, 1, 'Product must appear only once in the cart');
+
+  // Quantity must not exceed the available stock limit of 8
+  assert.ok(
+    matchingItems[0].quantity <= 8,
+    `Cart quantity (${matchingItems[0].quantity}) must not exceed stock (8)`
+  );
+  assert.equal(matchingItems[0].quantity, 8, 'Should cap at exactly 8 units added');
+
+  // Verify that subsequent read deduplicates and returns consistent totals
+  const subtotal = finalCart.data.data.items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  assert.equal(subtotal, 250000 * 8);
+});
+
+test('20. BUG 2: Cart quantity decrease and item removal work reliably without duplicates', async () => {
+  const customId = `cart-modify-${Date.now()}`;
+  await request('/products', {
+    method: 'POST',
+    headers: { Cookie: adminCookie },
+    body: {
+      customId,
+      name: 'Modify Cart Device',
+      brand: 'Apple',
+      category: 'iphone',
+      price: 100000,
+      stock: 10,
+      image: 'https://images.example.com/modify.jpg'
+    }
+  });
+
+  const cartInit = await request('/cart');
+  const sessionCookie = cartInit.cookie ? cartInit.cookie.split(';')[0] : '';
+
+  // Add 3 units
+  await request('/cart/items', {
+    method: 'POST',
+    headers: { Cookie: sessionCookie },
+    body: { productId: customId, quantity: 3 }
+  });
+
+  let cart = await request('/cart', { headers: { Cookie: sessionCookie } });
+  const cartItemId = cart.data.data.items[0].cartItemId;
+  assert.equal(cart.data.data.items[0].quantity, 3);
+
+  // Decrement by 1
+  const decRes = await request(`/cart/items/${encodeURIComponent(cartItemId)}`, {
+    method: 'PUT',
+    headers: { Cookie: sessionCookie },
+    body: { delta: -1 }
+  });
+  assert.equal(decRes.status, 200);
+  assert.equal(decRes.data.data.items[0].quantity, 2);
+
+  // Increment by 1
+  const incRes = await request(`/cart/items/${encodeURIComponent(cartItemId)}`, {
+    method: 'PUT',
+    headers: { Cookie: sessionCookie },
+    body: { delta: 1 }
+  });
+  assert.equal(incRes.status, 200);
+  assert.equal(incRes.data.data.items[0].quantity, 3);
 });
 

@@ -1,14 +1,30 @@
 import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ShoppingBag, ArrowLeft, ArrowRight, ShieldCheck, Truck, RotateCcw } from 'lucide-react';
+import { ShoppingBag, ArrowLeft, ArrowRight, ShieldCheck, Truck, RotateCcw, AlertTriangle } from 'lucide-react';
 import { useCart } from '../context/CartContext';
+import { useStore } from '../context/StoreContext';
 import CartItem from '../components/CartItem';
 import OrderSummary from '../components/OrderSummary';
 import Breadcrumbs from '../components/Breadcrumbs';
 
 export default function Cart() {
   const { cartItems, updateQuantity, removeFromCart, clearCart, cartLoading } = useCart();
+  const { products, addToast } = useStore();
   const navigate = useNavigate();
+
+  const stockConflicts = cartItems.filter((item) => {
+    const prod = products.find((p) => p.id === item.productId || p.id === item.id);
+    const stock = prod ? prod.stock : (typeof item.stock === 'number' ? item.stock : Infinity);
+    return item.quantity > stock;
+  });
+
+  const handleCheckoutClick = () => {
+    if (stockConflicts.length > 0) {
+      addToast('Please adjust items that exceed available inventory before proceeding.', 'error');
+      return;
+    }
+    navigate('/checkout');
+  };
 
   return (
     <div style={{ backgroundColor: 'var(--bg-secondary)', minHeight: '80vh', paddingBottom: '80px' }}>
@@ -109,16 +125,44 @@ export default function Cart() {
                 </button>
               </div>
 
+              {/* Stock Conflict Warning Banner */}
+              {stockConflicts.length > 0 && (
+                <div
+                  style={{
+                    backgroundColor: '#FEF2F2',
+                    border: '1px solid #F87171',
+                    borderRadius: 'var(--radius-md)',
+                    padding: '12px 16px',
+                    marginBottom: '16px',
+                    color: '#991B1B',
+                    fontSize: '0.88rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px'
+                  }}
+                >
+                  <AlertTriangle size={18} color="#DC2626" style={{ flexShrink: 0 }} />
+                  <span>
+                    One or more items in your cart exceed available inventory. Please adjust quantities before checking out.
+                  </span>
+                </div>
+              )}
+
               {/* Items List */}
               <div style={{ display: 'flex', flexDirection: 'column' }}>
-                {cartItems.map((item) => (
-                  <CartItem
-                    key={item.cartItemId}
-                    item={item}
-                    onUpdateQuantity={updateQuantity}
-                    onRemove={removeFromCart}
-                  />
-                ))}
+                {cartItems.map((item) => {
+                  const matchingProduct = products.find((p) => p.id === item.productId || p.id === item.id);
+                  const stock = matchingProduct ? matchingProduct.stock : (typeof item.stock === 'number' ? item.stock : Infinity);
+                  return (
+                    <CartItem
+                      key={item.cartItemId}
+                      item={item}
+                      availableStock={stock}
+                      onUpdateQuantity={updateQuantity}
+                      onRemove={removeFromCart}
+                    />
+                  );
+                })}
               </div>
 
               {/* Bottom Actions */}
@@ -143,7 +187,7 @@ export default function Cart() {
             <div>
               <OrderSummary
                 showCheckoutButton={true}
-                onCheckoutClick={() => navigate('/checkout')}
+                onCheckoutClick={handleCheckoutClick}
               />
             </div>
           </div>

@@ -4,6 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "start": "node server.js",
     "test": "node --test tests/api.test.js",
     "dev": "node --watch server.js",
     "seed": "node scripts/seed.js",

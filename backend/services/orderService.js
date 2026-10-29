@@ -43,27 +43,43 @@ export async function createOrderService({
     }
   });
 
-  // Verify all products exist and are active
+  // Verify all products exist, are active, and have sufficient inventory
+  const productRequestedQty = new Map();
+  for (const item of items) {
+    const key = item.id;
+    productRequestedQty.set(key, (productRequestedQty.get(key) || 0) + (Number(item.quantity) || 1));
+  }
+
+  for (const [prodId, totalRequested] of productRequestedQty.entries()) {
+    const dbProduct = productMap.get(prodId);
+    if (!dbProduct) {
+      const error = new Error(`Product with ID "${prodId}" could not be found.`);
+      error.statusCode = 404;
+      throw error;
+    }
+    if (!dbProduct.active) {
+      const error = new Error(`Product "${dbProduct.name}" is currently inactive and unavailable for purchase.`);
+      error.statusCode = 400;
+      throw error;
+    }
+    if (dbProduct.stock < totalRequested) {
+      const error = new Error(`Insufficient stock for "${dbProduct.name}". Available: ${dbProduct.stock}, Requested: ${totalRequested}`);
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
   const validatedItems = [];
   let calculatedSubtotal = 0;
   let calculatedCost = 0;
 
   for (const item of items) {
     const dbProduct = productMap.get(item.id);
-    if (!dbProduct) {
-      throw new Error(`Product with ID "${item.id}" could not be found.`);
-    }
-    if (!dbProduct.active) {
-      throw new Error(`Product "${dbProduct.name}" is currently inactive and unavailable for purchase.`);
-    }
     const variant = resolveProductVariant(dbProduct, item.storage, item.ptaStatus);
     if (dbProduct.variants.length && !variant) {
       const error = new Error(`The selected storage and PTA option is not available for "${dbProduct.name}".`);
       error.statusCode = 400;
       throw error;
-    }
-    if (dbProduct.stock < item.quantity) {
-      throw new Error(`Insufficient stock for "${dbProduct.name}". Available: ${dbProduct.stock}, Requested: ${item.quantity}`);
     }
 
     const itemPrice = variant?.price ?? dbProduct.price;
@@ -120,21 +136,31 @@ export async function createOrderService({
   const grossProfit = grandTotal - calculatedCost;
 
   // 4. Atomic stock updates to prevent overselling
+  const productDecrements = new Map();
+  for (const item of validatedItems) {
+    const pId = item.product.toString();
+    productDecrements.set(pId, (productDecrements.get(pId) || 0) + item.quantity);
+  }
+
   const stockUpdatedProducts = [];
   try {
-    for (const item of validatedItems) {
+    for (const [pId, totalDecrement] of productDecrements.entries()) {
       const updatedProduct = await Product.findOneAndUpdate(
-        { _id: item.product, stock: { $gte: item.quantity } },
-        { $inc: { stock: -item.quantity } },
+        { _id: pId, stock: { $gte: totalDecrement } },
+        { $inc: { stock: -totalDecrement } },
         { returnDocument: 'after' }
       );
 
       if (!updatedProduct) {
-        throw new Error(`Inventory conflict: insufficient stock for product "${item.name}".`);
+        const prod = productMap.get(pId);
+        const name = prod ? prod.name : 'product';
+        const err = new Error(`Inventory conflict: insufficient stock for product "${name}".`);
+        err.statusCode = 400;
+        throw err;
       }
       stockUpdatedProducts.push({
         product: updatedProduct,
-        quantity: item.quantity
+        quantity: totalDecrement
       });
     }
   } catch (stockErr) {

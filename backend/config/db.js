@@ -106,7 +106,7 @@ export async function connectDB() {
 }
 
 async function connect() {
-  const uri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/bluebells';
+  const uri = process.env.MONGODB_URI || process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/bluebells';
 
   const mongooseOptions = {
     maxPoolSize: 150, // Scaled connection pool to handle high-traffic parallel queries

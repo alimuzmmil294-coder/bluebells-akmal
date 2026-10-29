@@ -6,11 +6,44 @@ import api from '../services/api';
 
 const CartContext = createContext(null);
 
+let cartSyncQueue = Promise.resolve();
+const queueSync = (syncFn) => {
+  cartSyncQueue = cartSyncQueue
+    .then(syncFn)
+    .catch((err) => {
+      console.warn('[Cart] Sync error:', err?.message || err);
+    });
+  return cartSyncQueue;
+};
+
+function deduplicateCartItems(items) {
+  if (!Array.isArray(items)) return [];
+  const map = new Map();
+  for (const item of items) {
+    if (!item) continue;
+    const key = item.cartItemId || `${item.id || item.productId}_${item.storage || 'Standard'}_${item.ptaStatus || 'Not Applicable'}_${item.color || 'Default'}`.replace(/\s+/g, '-');
+    if (map.has(key)) {
+      const existing = map.get(key);
+      existing.quantity += item.quantity;
+      if (typeof item.stock === 'number') existing.stock = item.stock;
+    } else {
+      map.set(key, {
+        ...item,
+        cartItemId: key,
+        id: item.id || item.productId,
+        productId: item.productId || item.id
+      });
+    }
+  }
+  return Array.from(map.values());
+}
+
 export function CartProvider({ children }) {
   const { settings, addToast, currentUser } = useStore();
 
   const [cartItems, setCartItems] = useState(() => {
-    return getStorageItem('bluebells_cart', []);
+    const raw = getStorageItem('bluebells_cart', []);
+    return deduplicateCartItems(raw);
   });
 
   const [cartLoading, setCartLoading] = useState(true);
@@ -39,10 +72,7 @@ export function CartProvider({ children }) {
   const updateCartFromResponse = (response) => {
     const items = response?.data?.items;
     if (Array.isArray(items)) {
-      setCartItems(items.map((item) => ({
-        ...item,
-        id: item.id || item.productId
-      })));
+      setCartItems(deduplicateCartItems(items));
     }
   };
 
@@ -77,6 +107,14 @@ export function CartProvider({ children }) {
   }, [currentUser?._id, currentUser?.email]);
 
   const addToCart = async (product, quantity = 1, storage = null, color = null, colorHex = null, ptaStatus = null) => {
+    if (!product) return false;
+
+    const availableStock = typeof product.stock === 'number' ? product.stock : Infinity;
+    if (availableStock <= 0) {
+      addToast(`"${product.name}" is out of stock`, 'error');
+      return false;
+    }
+
     const selectedStorage = storage || (product.storageOptions && product.storageOptions[0]) || 'Standard';
     const selectedColor = color || (product.colors && product.colors[0]?.name) || 'Default';
     const selectedColorHex = colorHex || (product.colors && product.colors[0]?.hex) || '#171717';
@@ -86,6 +124,19 @@ export function CartProvider({ children }) {
     const variant = product.variants?.find((v) => v.storage === selectedStorage && v.ptaStatus === selectedPtaStatus);
     const selectedPrice = variant?.price ?? product.price;
     const selectedOriginalPrice = variant?.originalPrice || product.originalPrice || 0;
+
+    const existingItem = cartItems.find(
+      (i) => i.cartItemId === cartItemId || (i.productId === product.id && i.storage === selectedStorage && i.color === selectedColor && i.ptaStatus === selectedPtaStatus)
+    );
+    const currentQty = existingItem ? existingItem.quantity : 0;
+
+    if (currentQty >= availableStock) {
+      addToast(`Maximum available quantity reached (${availableStock} in stock)`, 'warning');
+      return false;
+    }
+
+    const requestedQty = Math.max(1, Number(quantity) || 1);
+    const quantityToAdd = Math.min(requestedQty, availableStock - currentQty);
 
     // Instant optimistic update (0ms perceived latency!)
     const optimisticItem = {
@@ -102,51 +153,68 @@ export function CartProvider({ children }) {
       ptaStatus: selectedPtaStatus,
       color: selectedColor,
       colorHex: selectedColorHex,
-      quantity: Math.max(1, Number(quantity))
+      quantity: quantityToAdd,
+      stock: availableStock
     };
 
     setCartItems((prev) => {
-      const existingIdx = prev.findIndex(
-        (i) => i.cartItemId === cartItemId || (i.productId === product.id && i.storage === selectedStorage && i.color === selectedColor)
+      const clean = deduplicateCartItems(prev);
+      const existingIdx = clean.findIndex(
+        (i) => i.cartItemId === cartItemId || (i.productId === product.id && i.storage === selectedStorage && i.color === selectedColor && i.ptaStatus === selectedPtaStatus)
       );
       if (existingIdx > -1) {
-        const updated = [...prev];
+        const updated = [...clean];
+        const newQty = Math.min(availableStock, updated[existingIdx].quantity + quantityToAdd);
         updated[existingIdx] = {
           ...updated[existingIdx],
-          quantity: updated[existingIdx].quantity + Number(quantity)
+          quantity: newQty,
+          stock: availableStock
         };
         return updated;
       }
-      return [optimisticItem, ...prev];
+      return [optimisticItem, ...clean];
     });
 
     addToast('Added to cart!', 'success');
 
-    // Background sync with server
-    try {
-      const response = await api.cart.addItem({
-        productId: product.id,
-        quantity,
-        storage: selectedStorage,
-        ptaStatus: selectedPtaStatus,
-        color: selectedColor,
-        colorHex: selectedColorHex
-      });
-      updateCartFromResponse(response);
-      return true;
-    } catch (err) {
-      console.warn('[Cart] Server add item sync failed; saved locally:', err.message);
-      return true;
-    }
+    // Serialized background sync with server
+    queueSync(async () => {
+      try {
+        const response = await api.cart.addItem({
+          productId: product.id,
+          quantity: quantityToAdd,
+          storage: selectedStorage,
+          ptaStatus: selectedPtaStatus,
+          color: selectedColor,
+          colorHex: selectedColorHex
+        });
+        updateCartFromResponse(response);
+      } catch (err) {
+        console.warn('[Cart] Server add item sync failed; saved locally:', err.message);
+      }
+    });
+
+    return true;
   };
 
   const updateQuantity = async (cartItemId, delta) => {
+    const target = cartItems.find((i) => i.cartItemId === cartItemId || i.productId === cartItemId || i.id === cartItemId);
+    const itemStock = target ? (typeof target.stock === 'number' ? target.stock : Infinity) : Infinity;
+    const numDelta = Number(delta) || 0;
+
+    if (numDelta > 0 && target && target.quantity >= itemStock) {
+      addToast(`Maximum available quantity reached (${itemStock} in stock)`, 'warning');
+      return;
+    }
+
     // Instant optimistic quantity update
     setCartItems((prev) => {
-      return prev
+      const clean = deduplicateCartItems(prev);
+      return clean
         .map((item) => {
           if (item.cartItemId === cartItemId || item.productId === cartItemId || item.id === cartItemId) {
-            const newQty = item.quantity + Number(delta);
+            const limit = typeof item.stock === 'number' ? item.stock : Infinity;
+            const newQty = Math.min(limit, item.quantity + numDelta);
             return newQty > 0 ? { ...item, quantity: newQty } : null;
           }
           return item;
@@ -154,12 +222,14 @@ export function CartProvider({ children }) {
         .filter(Boolean);
     });
 
-    try {
-      const response = await api.cart.updateQuantity(cartItemId, delta);
-      updateCartFromResponse(response);
-    } catch (err) {
-      console.warn('[Cart] Server update quantity failed; saved locally:', err.message);
-    }
+    queueSync(async () => {
+      try {
+        const response = await api.cart.updateQuantity(cartItemId, delta);
+        updateCartFromResponse(response);
+      } catch (err) {
+        console.warn('[Cart] Server update quantity failed; saved locally:', err.message);
+      }
+    });
   };
 
   const removeFromCart = async (cartItemId) => {
@@ -169,12 +239,14 @@ export function CartProvider({ children }) {
     );
     addToast('Item removed from cart', 'info');
 
-    try {
-      const response = await api.cart.removeItem(cartItemId);
-      updateCartFromResponse(response);
-    } catch (err) {
-      console.warn('[Cart] Server remove item failed; saved locally:', err.message);
-    }
+    queueSync(async () => {
+      try {
+        const response = await api.cart.removeItem(cartItemId);
+        updateCartFromResponse(response);
+      } catch (err) {
+        console.warn('[Cart] Server remove item failed; saved locally:', err.message);
+      }
+    });
   };
 
   const clearCart = async () => {

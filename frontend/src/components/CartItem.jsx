@@ -3,8 +3,12 @@ import { Link } from 'react-router-dom';
 import { Minus, Plus, Trash2 } from 'lucide-react';
 import { formatPrice } from '../utils/currency';
 
-export default function CartItem({ item, onUpdateQuantity, onRemove }) {
+export default function CartItem({ item, onUpdateQuantity, onRemove, availableStock }) {
   if (!item) return null;
+
+  const stockLimit = typeof availableStock === 'number' ? availableStock : (typeof item.stock === 'number' ? item.stock : Infinity);
+  const isAtMaxStock = item.quantity >= stockLimit;
+  const exceedsStock = item.quantity > stockLimit;
 
   const lineTotal = item.price * item.quantity;
 
@@ -79,6 +83,15 @@ export default function CartItem({ item, onUpdateQuantity, onRemove }) {
       <div style={{ minWidth: '110px', textAlign: 'left' }}>
         <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'block' }}>Unit Price</span>
         <span style={{ fontWeight: 600, fontSize: '0.95rem' }}>{formatPrice(item.price)}</span>
+        {exceedsStock && stockLimit < Infinity ? (
+          <span style={{ fontSize: '0.72rem', color: '#DC2626', fontWeight: 700, display: 'block', marginTop: '4px' }}>
+            Only {stockLimit} available!
+          </span>
+        ) : isAtMaxStock && stockLimit < Infinity ? (
+          <span style={{ fontSize: '0.72rem', color: '#D97706', fontWeight: 600, display: 'block', marginTop: '4px' }}>
+            Max reached ({stockLimit})
+          </span>
+        ) : null}
       </div>
 
       {/* Quantity Stepper */}
@@ -114,15 +127,18 @@ export default function CartItem({ item, onUpdateQuantity, onRemove }) {
 
         <button
           onClick={() => onUpdateQuantity(item.cartItemId || item.id || item.productId, 1)}
+          disabled={isAtMaxStock}
           style={{
             padding: '8px 12px',
             background: 'none',
             border: 'none',
-            cursor: 'pointer',
+            cursor: isAtMaxStock ? 'not-allowed' : 'pointer',
+            opacity: isAtMaxStock ? 0.3 : 1,
             display: 'flex',
             alignItems: 'center'
           }}
           aria-label="Increase quantity"
+          title={isAtMaxStock ? `Maximum available quantity reached (${stockLimit} in stock)` : "Increase quantity"}
         >
           <Plus size={14} />
         </button>
