@@ -1217,5 +1217,102 @@ test('22. Add to Cart Performance: Multiple different products added concurrentl
   assert.ok(itemC && itemC.quantity === 1, 'Product C should have quantity 1');
 });
 
+test('23. Clear All Cart: Clear operation permanently and immediately removes all items and prevents stale restoration', async () => {
+  const prodX = `clear-prod-x-${Date.now()}`;
+  const prodY = `clear-prod-y-${Date.now()}`;
+
+  await Promise.all([
+    request('/products', {
+      method: 'POST',
+      headers: { Cookie: adminCookie },
+      body: {
+        customId: prodX,
+        name: 'Clear Test Device X',
+        brand: 'Apple',
+        category: 'iphone',
+        price: 200000,
+        stock: 5,
+        image: 'https://images.example.com/x.jpg'
+      }
+    }),
+    request('/products', {
+      method: 'POST',
+      headers: { Cookie: adminCookie },
+      body: {
+        customId: prodY,
+        name: 'Clear Test Device Y',
+        brand: 'Samsung',
+        category: 'samsung',
+        price: 180000,
+        stock: 5,
+        image: 'https://images.example.com/y.jpg'
+      }
+    })
+  ]);
+
+  const cartInit = await request('/cart');
+  const sessionCookie = cartInit.cookie ? cartInit.cookie.split(';')[0] : '';
+
+  // Add items to cart
+  await request('/cart/items', {
+    method: 'POST',
+    headers: { Cookie: sessionCookie },
+    body: { productId: prodX, quantity: 2 }
+  });
+  await request('/cart/items', {
+    method: 'POST',
+    headers: { Cookie: sessionCookie },
+    body: { productId: prodY, quantity: 1 }
+  });
+
+  const cartBefore = await request('/cart', { headers: { Cookie: sessionCookie } });
+  assert.equal(cartBefore.data.data.items.length, 2, 'Cart should have 2 products initially');
+
+  // Perform Clear All Cart
+  const clearRes = await request('/cart', {
+    method: 'DELETE',
+    headers: { Cookie: sessionCookie }
+  });
+  assert.equal(clearRes.status, 200);
+  assert.equal(clearRes.data.success, true);
+  assert.equal(clearRes.data.data.items.length, 0);
+
+  // Subsequent cart GET must be completely empty
+  const cartAfter = await request('/cart', { headers: { Cookie: sessionCookie } });
+  assert.equal(cartAfter.status, 200);
+  assert.equal(cartAfter.data.data.items.length, 0, 'Cart must remain empty after clearing');
+
+  // Verify that adding a brand new product works and only that new product is in cart
+  const prodZ = `clear-prod-z-${Date.now()}`;
+  await request('/products', {
+    method: 'POST',
+    headers: { Cookie: adminCookie },
+    body: {
+      customId: prodZ,
+      name: 'Clear Test Device Z',
+      brand: 'Apple',
+      category: 'iphone',
+      price: 90000,
+      stock: 5,
+      image: 'https://images.example.com/z.jpg'
+    }
+  });
+
+  const addNewRes = await request('/cart/items', {
+    method: 'POST',
+    headers: { Cookie: sessionCookie },
+    body: { productId: prodZ, quantity: 1 }
+  });
+  assert.equal(addNewRes.status, 200);
+  assert.equal(addNewRes.data.data.items.length, 1);
+  assert.equal(addNewRes.data.data.items[0].productId, prodZ);
+
+  // Deleted products X and Y must NOT be restored
+  const finalCart = await request('/cart', { headers: { Cookie: sessionCookie } });
+  assert.equal(finalCart.data.data.items.length, 1);
+  assert.equal(finalCart.data.data.items[0].productId, prodZ);
+});
+
+
 
 

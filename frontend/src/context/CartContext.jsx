@@ -42,6 +42,7 @@ export function CartProvider({ children }) {
     cartItemsRef.current = cartItems;
   }, [cartItems]);
 
+  const clearEpochRef = useRef(0);
   const pendingRemovals = useRef(new Set());
 
   const [cartLoading, setCartLoading] = useState(true);
@@ -69,13 +70,23 @@ export function CartProvider({ children }) {
     );
   }, [cartItems, activeCoupon, settings?.standardShippingFee, settings?.freeShippingThreshold]);
 
-  const updateCartFromResponse = (response) => {
+  const updateCartFromResponse = (response, requestEpoch = null) => {
+    // If the cart was cleared while this request was in flight, discard the response completely
+    if (requestEpoch !== null && requestEpoch < clearEpochRef.current) {
+      return;
+    }
+
     const serverItems = response?.data?.items;
     if (!Array.isArray(serverItems)) return;
 
     const currentLocal = cartItemsRef.current || [];
-    const serverMap = new Map();
 
+    // If local cart is currently empty (e.g., cleared by the user), never revive it with stale server items
+    if (currentLocal.length === 0 && serverItems.length > 0) {
+      return;
+    }
+
+    const serverMap = new Map();
     for (const item of serverItems) {
       if (item && !pendingRemovals.current.has(item.cartItemId)) {
         serverMap.set(item.cartItemId, { ...item });
@@ -111,16 +122,19 @@ export function CartProvider({ children }) {
     let isMounted = true;
 
     async function loadCart() {
+      const requestEpoch = clearEpochRef.current;
       setCartLoading(true);
       try {
         const response = await api.cart.get();
-        if (!isMounted) return;
-        updateCartFromResponse(response);
+        if (!isMounted || requestEpoch < clearEpochRef.current) return;
+        updateCartFromResponse(response, requestEpoch);
         const couponCode = response.data?.couponCode || null;
         setAppliedCouponCode(couponCode);
         if (couponCode) {
           const couponResponse = await api.cart.applyCoupon(couponCode);
-          if (isMounted) setActiveCoupon(couponResponse.data?.coupon || null);
+          if (isMounted && requestEpoch === clearEpochRef.current) {
+            setActiveCoupon(couponResponse.data?.coupon || null);
+          }
         } else {
           setActiveCoupon(null);
         }
@@ -217,6 +231,9 @@ export function CartProvider({ children }) {
       nextCart = [optimisticItem, ...cleanCurrent];
     }
 
+    // Capture the epoch at the time of addition
+    const requestEpoch = clearEpochRef.current;
+
     // Synchronously update ref, state, and storage for instantaneous 0ms display
     cartItemsRef.current = nextCart;
     setCartItems(nextCart);
@@ -236,13 +253,16 @@ export function CartProvider({ children }) {
           color: selectedColor,
           colorHex: selectedColorHex
         });
-        updateCartFromResponse(response);
+        if (requestEpoch < clearEpochRef.current) return;
+        updateCartFromResponse(response, requestEpoch);
       } catch (err) {
+        if (requestEpoch < clearEpochRef.current) return;
         console.warn('[Cart] Server add item sync failed; saved locally:', err.message);
         if (err.response?.data?.error || err.response?.data?.message) {
           addToast(err.response.data.error || err.response.data.message, 'error');
           try {
             const freshCart = await api.cart.get();
+            if (requestEpoch < clearEpochRef.current) return;
             if (Array.isArray(freshCart?.data?.items)) {
               const reverted = deduplicateCartItems(freshCart.data.items);
               cartItemsRef.current = reverted;
@@ -268,6 +288,8 @@ export function CartProvider({ children }) {
       return;
     }
 
+    const requestEpoch = clearEpochRef.current;
+
     // Instant optimistic quantity update
     const nextCart = currentList
       .map((item) => {
@@ -286,14 +308,17 @@ export function CartProvider({ children }) {
 
     try {
       const response = await api.cart.updateQuantity(cartItemId, delta);
-      updateCartFromResponse(response);
+      if (requestEpoch < clearEpochRef.current) return;
+      updateCartFromResponse(response, requestEpoch);
     } catch (err) {
+      if (requestEpoch < clearEpochRef.current) return;
       console.warn('[Cart] Server update quantity failed; saved locally:', err.message);
     }
   };
 
   const removeFromCart = async (cartItemId) => {
     pendingRemovals.current.add(cartItemId);
+    const requestEpoch = clearEpochRef.current;
 
     // Instant optimistic deletion
     const nextCart = (cartItemsRef.current || []).filter(
@@ -307,25 +332,42 @@ export function CartProvider({ children }) {
     try {
       const response = await api.cart.removeItem(cartItemId);
       pendingRemovals.current.delete(cartItemId);
-      updateCartFromResponse(response);
+      if (requestEpoch < clearEpochRef.current) return;
+      updateCartFromResponse(response, requestEpoch);
     } catch (err) {
       pendingRemovals.current.delete(cartItemId);
+      if (requestEpoch < clearEpochRef.current) return;
       console.warn('[Cart] Server remove item failed; saved locally:', err.message);
     }
   };
 
   const clearCart = async () => {
+    // Increment clear epoch immediately to invalidate all pending / in-flight additions
+    clearEpochRef.current += 1;
+    const thisClearEpoch = clearEpochRef.current;
+    pendingRemovals.current.clear();
+
+    // Synchronously purge client state and local storage immediately
     cartItemsRef.current = [];
     setCartItems([]);
     setStorageItem('bluebells_cart', []);
     setAppliedCouponCode(null);
     setActiveCoupon(null);
+    setStorageItem('bluebells_applied_coupon', null);
 
     try {
-      const response = await api.cart.clear();
-      updateCartFromResponse(response);
+      await api.cart.clear();
+      // Ensure state remains empty if no newer user action occurred
+      if (thisClearEpoch === clearEpochRef.current) {
+        cartItemsRef.current = [];
+        setCartItems([]);
+        setStorageItem('bluebells_cart', []);
+        setAppliedCouponCode(null);
+        setActiveCoupon(null);
+        setStorageItem('bluebells_applied_coupon', null);
+      }
     } catch (err) {
-      addToast(err.message || 'Could not clear cart', 'error');
+      console.warn('[Cart] Server clear failed; local cart remains cleared:', err.message);
     }
   };
 

@@ -339,16 +339,29 @@ export async function removeItem(req, res, next) {
 
 export async function clearCart(req, res, next) {
   try {
-    const cart = await findOrCreateCart(req);
-    cart.items = [];
-    cart.couponCode = null;
-    cart.lastAccessedAt = new Date();
-    await cart.save();
+    const result = await queueCartOperation(req, async () => {
+      const cart = await findOrCreateCart(req);
+      cart.items = [];
+      cart.couponCode = null;
+      cart.lastAccessedAt = new Date();
+      await cart.save();
+
+      const userId = req.session?.userId || null;
+      const sessionId = req.sessionID || 'anon';
+      if (userId) {
+        await Cart.updateMany({ user: userId }, { $set: { items: [], couponCode: null, lastAccessedAt: new Date() } });
+      }
+      if (sessionId && sessionId !== 'anon') {
+        await Cart.updateMany({ sessionId }, { $set: { items: [], couponCode: null, lastAccessedAt: new Date() } });
+      }
+
+      return { items: [], couponCode: null };
+    });
 
     res.status(200).json({
       success: true,
       message: 'Cart cleared successfully.',
-      data: { items: [], couponCode: null }
+      data: result
     });
   } catch (err) {
     next(err);
