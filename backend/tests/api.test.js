@@ -1131,4 +1131,91 @@ test('21. Optional and Customizable PTA and Non-PTA Pricing for Products', async
   assert.equal(item2.price, 180000);
 });
 
+test('22. Add to Cart Performance: Multiple different products added concurrently all appear in the cart immediately', async () => {
+  const prodAId = `rapid-a-${Date.now()}`;
+  const prodBId = `rapid-b-${Date.now()}`;
+  const prodCId = `rapid-c-${Date.now()}`;
+
+  await Promise.all([
+    request('/products', {
+      method: 'POST',
+      headers: { Cookie: adminCookie },
+      body: {
+        customId: prodAId,
+        name: 'Rapid Product A',
+        brand: 'Apple',
+        category: 'iphone',
+        price: 150000,
+        stock: 10,
+        image: 'https://images.example.com/a.jpg'
+      }
+    }),
+    request('/products', {
+      method: 'POST',
+      headers: { Cookie: adminCookie },
+      body: {
+        customId: prodBId,
+        name: 'Rapid Product B',
+        brand: 'Samsung',
+        category: 'samsung',
+        price: 120000,
+        stock: 10,
+        image: 'https://images.example.com/b.jpg'
+      }
+    }),
+    request('/products', {
+      method: 'POST',
+      headers: { Cookie: adminCookie },
+      body: {
+        customId: prodCId,
+        name: 'Rapid Product C',
+        brand: 'Apple',
+        category: 'accessories',
+        price: 25000,
+        stock: 15,
+        image: 'https://images.example.com/c.jpg'
+      }
+    })
+  ]);
+
+  const cartInit = await request('/cart');
+  const sessionCookie = cartInit.cookie ? cartInit.cookie.split(';')[0] : '';
+
+  // Fire 3 simultaneous Add to Cart requests for different products at once
+  const [resA, resB, resC] = await Promise.all([
+    request('/cart/items', {
+      method: 'POST',
+      headers: { Cookie: sessionCookie },
+      body: { productId: prodAId, quantity: 1 }
+    }),
+    request('/cart/items', {
+      method: 'POST',
+      headers: { Cookie: sessionCookie },
+      body: { productId: prodBId, quantity: 2 }
+    }),
+    request('/cart/items', {
+      method: 'POST',
+      headers: { Cookie: sessionCookie },
+      body: { productId: prodCId, quantity: 1 }
+    })
+  ]);
+
+  assert.equal(resA.status, 200);
+  assert.equal(resB.status, 200);
+  assert.equal(resC.status, 200);
+
+  const finalCart = await request('/cart', { headers: { Cookie: sessionCookie } });
+  assert.equal(finalCart.status, 200);
+  assert.equal(finalCart.data.data.items.length, 3, 'All 3 products must be present in the cart');
+
+  const itemA = finalCart.data.data.items.find((i) => i.productId === prodAId);
+  const itemB = finalCart.data.data.items.find((i) => i.productId === prodBId);
+  const itemC = finalCart.data.data.items.find((i) => i.productId === prodCId);
+
+  assert.ok(itemA && itemA.quantity === 1, 'Product A should have quantity 1');
+  assert.ok(itemB && itemB.quantity === 2, 'Product B should have quantity 2');
+  assert.ok(itemC && itemC.quantity === 1, 'Product C should have quantity 1');
+});
+
+
 
