@@ -118,12 +118,20 @@ export function CartProvider({ children }) {
     const selectedStorage = storage || (product.storageOptions && product.storageOptions[0]) || 'Standard';
     const selectedColor = color || (product.colors && product.colors[0]?.name) || 'Default';
     const selectedColorHex = colorHex || (product.colors && product.colors[0]?.hex) || '#171717';
-    const selectedPtaStatus = ptaStatus || (product.variants?.find((v) => v.storage === selectedStorage)?.ptaStatus) || 'Not Applicable';
-
-    const cartItemId = `${product.id}_${selectedStorage}_${selectedPtaStatus}_${selectedColor}`.replace(/\s+/g, '-');
-    const variant = product.variants?.find((v) => v.storage === selectedStorage && v.ptaStatus === selectedPtaStatus);
+    const storageVariants = product.variants?.filter((v) => v.storage === selectedStorage) || [];
+    let variant = ptaStatus ? storageVariants.find((v) => v.ptaStatus === ptaStatus) : null;
+    if (!variant && storageVariants.length === 1) {
+      variant = storageVariants[0];
+    }
+    if (!variant && storageVariants.length > 0) {
+      variant = storageVariants.find((v) => v.ptaStatus === 'PTA Approved') ||
+                storageVariants.find((v) => v.ptaStatus === 'Not Applicable') ||
+                storageVariants[0];
+    }
+    const selectedPtaStatus = variant?.ptaStatus || ptaStatus || 'Not Applicable';
     const selectedPrice = variant?.price ?? product.price;
     const selectedOriginalPrice = variant?.originalPrice || product.originalPrice || 0;
+    const cartItemId = `${product.id}_${selectedStorage}_${selectedPtaStatus}_${selectedColor}`.replace(/\s+/g, '-');
 
     const existingItem = cartItems.find(
       (i) => i.cartItemId === cartItemId || (i.productId === product.id && i.storage === selectedStorage && i.color === selectedColor && i.ptaStatus === selectedPtaStatus)

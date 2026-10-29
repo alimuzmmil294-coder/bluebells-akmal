@@ -29,7 +29,8 @@ export default function ProductCard({ product }) {
 
     const defaultVariant = product.variants
       ?.filter((variant) => variant.ptaStatus !== 'Non-PTA')
-      .sort((a, b) => a.price - b.price)[0];
+      .sort((a, b) => a.price - b.price)[0]
+      || product.variants?.sort((a, b) => a.price - b.price)[0];
     const defaultStorage = defaultVariant?.storage || product.storageOptions?.[0] || 'Standard';
     const defaultColor = product.colors?.[0]?.name || 'Default';
     const defaultColorHex = product.colors?.[0]?.hex || '#171717';

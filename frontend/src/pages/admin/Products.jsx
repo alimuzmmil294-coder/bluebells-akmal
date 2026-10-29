@@ -34,8 +34,8 @@ function makeStorageRows(product) {
     return {
       storage,
       price: standardVariant?.price ?? defaultPrice,
-      ptaPrice: ptaVariant?.price ?? defaultPrice,
-      nonPtaPrice: nonPtaVariant?.price ?? defaultPrice
+      ptaPrice: ptaVariant ? ptaVariant.price : (product?.variants?.length ? '' : defaultPrice),
+      nonPtaPrice: nonPtaVariant ? nonPtaVariant.price : ''
     };
   });
 }
@@ -186,16 +186,39 @@ export default function AdminProducts() {
 
     const variants = storageVariants.flatMap((row) => {
       if (isPhoneCategory) {
-        return [
-          { storage: row.storage, ptaStatus: 'PTA Approved', price: Number(row.ptaPrice) },
-          { storage: row.storage, ptaStatus: 'Non-PTA', price: Number(row.nonPtaPrice) }
-        ];
+        const rowVariants = [];
+        const ptaPrice = row.ptaPrice !== '' && row.ptaPrice !== null && row.ptaPrice !== undefined ? Number(row.ptaPrice) : null;
+        const nonPtaPrice = row.nonPtaPrice !== '' && row.nonPtaPrice !== null && row.nonPtaPrice !== undefined ? Number(row.nonPtaPrice) : null;
+
+        if (ptaPrice !== null && Number.isFinite(ptaPrice) && ptaPrice > 0) {
+          rowVariants.push({ storage: row.storage, ptaStatus: 'PTA Approved', price: ptaPrice });
+        }
+        if (nonPtaPrice !== null && Number.isFinite(nonPtaPrice) && nonPtaPrice > 0) {
+          rowVariants.push({ storage: row.storage, ptaStatus: 'Non-PTA', price: nonPtaPrice });
+        }
+        return rowVariants;
       }
       return [{ storage: row.storage, ptaStatus: 'Not Applicable', price: Number(row.price) }];
     });
 
-    if (variants.some((variant) => !Number.isFinite(variant.price) || variant.price <= 0)) {
-      addToast('Enter a valid price for every storage and PTA option.', 'error');
+    if (isPhoneCategory) {
+      for (const row of storageVariants) {
+        const hasPta = row.ptaPrice !== '' && !isNaN(Number(row.ptaPrice)) && Number(row.ptaPrice) > 0;
+        const hasNonPta = row.nonPtaPrice !== '' && !isNaN(Number(row.nonPtaPrice)) && Number(row.nonPtaPrice) > 0;
+        if (!hasPta && !hasNonPta) {
+          addToast(`Enter at least one price (PTA or Non-PTA) for storage "${row.storage}".`, 'error');
+          return;
+        }
+      }
+    } else {
+      if (variants.some((variant) => !Number.isFinite(variant.price) || variant.price <= 0)) {
+        addToast('Enter a valid price for every option.', 'error');
+        return;
+      }
+    }
+
+    if (variants.length === 0) {
+      addToast('Enter at least one valid price.', 'error');
       return;
     }
 
@@ -717,7 +740,7 @@ export default function AdminProducts() {
           <div className="form-group">
             <div className="admin-product-section-heading">
               <label className="form-label">Storage &amp; Variant Pricing</label>
-              <span>{isPhoneCategory ? 'Set both PTA prices for each storage' : 'Set a price for each option'}</span>
+              <span>{isPhoneCategory ? 'Set PTA price, Non-PTA price, or both for each storage' : 'Set a price for each option'}</span>
             </div>
             <div className="admin-storage-options">
               {formData.storageVariants.map((row, index) => (
@@ -746,9 +769,8 @@ export default function AdminProducts() {
                             ...previous,
                             storageVariants: previous.storageVariants.map((item, rowIndex) => rowIndex === index ? { ...item, ptaPrice: e.target.value } : item)
                           }))}
-                          placeholder="PKR"
+                          placeholder="PKR (Optional)"
                           className="form-input"
-                          required
                         />
                       </label>
                       <label className="admin-price-input">
@@ -761,9 +783,8 @@ export default function AdminProducts() {
                             ...previous,
                             storageVariants: previous.storageVariants.map((item, rowIndex) => rowIndex === index ? { ...item, nonPtaPrice: e.target.value } : item)
                           }))}
-                          placeholder="PKR"
+                          placeholder="PKR (Optional)"
                           className="form-input"
-                          required
                         />
                       </label>
                     </>

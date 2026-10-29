@@ -70,13 +70,17 @@ export default function ProductDetails() {
     if (product) {
       const firstStorage = product.storageOptions?.[0] || product.variants?.[0]?.storage || 'Standard';
       const firstStorageVariants = product.variants?.filter((variant) => variant.storage === firstStorage) || [];
+      const firstPtaOptions = firstStorageVariants
+        .map((v) => v.ptaStatus)
+        .filter((s) => s === 'PTA Approved' || s === 'Non-PTA');
+
       setSelectedImage(galleryImages[0] || product.image);
       setSelectedStorage(firstStorage);
       setSelectedPtaStatus(
-        firstStorageVariants.find((variant) => variant.ptaStatus === 'PTA Approved')?.ptaStatus ||
-        firstStorageVariants.find((variant) => variant.ptaStatus === 'Not Applicable')?.ptaStatus ||
+        firstPtaOptions.includes('PTA Approved') ? 'PTA Approved' :
+        firstPtaOptions[0] ||
         firstStorageVariants[0]?.ptaStatus ||
-        'PTA Approved'
+        'Not Applicable'
       );
       setSelectedColor(product.colors?.[0] || { name: 'Standard', hex: '#171717' });
       setQuantity(1);
@@ -115,11 +119,28 @@ export default function ProductDetails() {
   }
 
   const inWishlist = isInWishlist(product.id);
-  const ptaStatuses = [...new Set((product.variants || []).map((variant) => variant.ptaStatus))];
-  const hasPtaOptions = ptaStatuses.includes('PTA Approved') && ptaStatuses.includes('Non-PTA');
-  const selectedVariant = product.variants?.find(
-    (variant) => variant.storage === selectedStorage && variant.ptaStatus === selectedPtaStatus
-  );
+  const storageVariants = product.variants?.filter((variant) => variant.storage === selectedStorage) || [];
+  const availablePtaStatuses = [
+    ...new Set(storageVariants.map((variant) => variant.ptaStatus).filter((status) => status === 'PTA Approved' || status === 'Non-PTA'))
+  ];
+  const hasPtaOptions = availablePtaStatuses.length > 0;
+
+  // Auto-sync selectedPtaStatus if current selection is not available for selectedStorage
+  useEffect(() => {
+    if (availablePtaStatuses.length > 0) {
+      if (!availablePtaStatuses.includes(selectedPtaStatus)) {
+        const nextStatus = availablePtaStatuses.includes('PTA Approved')
+          ? 'PTA Approved'
+          : availablePtaStatuses[0];
+        setSelectedPtaStatus(nextStatus);
+      }
+    }
+  }, [selectedStorage, availablePtaStatuses.join('|')]);
+
+  const selectedVariant = storageVariants.find(
+    (variant) => variant.ptaStatus === selectedPtaStatus
+  ) || (storageVariants.length === 1 ? storageVariants[0] : null) || storageVariants[0];
+
   const selectedPrice = selectedVariant?.price ?? product.price;
   const selectedOriginalPrice = selectedVariant?.originalPrice || product.originalPrice;
   const discount = calculateDiscount(selectedPrice, selectedOriginalPrice);
@@ -370,28 +391,31 @@ export default function ProductDetails() {
             {hasPtaOptions && (
               <div style={{ marginBottom: '24px' }}>
                 <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: 700, marginBottom: '10px' }}>
-                  PTA Status: <span style={{ color: 'var(--primary-blue)' }}>{selectedPtaStatus}</span>
+                  PTA Status: <span style={{ color: 'var(--primary-blue)' }}>{selectedVariant?.ptaStatus || selectedPtaStatus}</span>
                 </label>
                 <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                  {['PTA Approved', 'Non-PTA'].map((status) => (
-                    <button
-                      key={status}
-                      type="button"
-                      onClick={() => setSelectedPtaStatus(status)}
-                      style={{
-                        padding: '10px 14px',
-                        borderRadius: 'var(--radius-md)',
-                        fontSize: '0.88rem',
-                        fontWeight: 700,
-                        cursor: 'pointer',
-                        border: selectedPtaStatus === status ? '2px solid var(--primary-blue)' : '1px solid var(--border-color)',
-                        backgroundColor: selectedPtaStatus === status ? 'var(--blue-light)' : '#FFFFFF',
-                        color: selectedPtaStatus === status ? 'var(--primary-blue)' : 'var(--text-primary)'
-                      }}
-                    >
-                      {status}
-                    </button>
-                  ))}
+                  {availablePtaStatuses.map((status) => {
+                    const isSelected = (selectedVariant?.ptaStatus || selectedPtaStatus) === status;
+                    return (
+                      <button
+                        key={status}
+                        type="button"
+                        onClick={() => setSelectedPtaStatus(status)}
+                        style={{
+                          padding: '10px 14px',
+                          borderRadius: 'var(--radius-md)',
+                          fontSize: '0.88rem',
+                          fontWeight: 700,
+                          cursor: availablePtaStatuses.length > 1 ? 'pointer' : 'default',
+                          border: isSelected ? '2px solid var(--primary-blue)' : '1px solid var(--border-color)',
+                          backgroundColor: isSelected ? 'var(--blue-light)' : '#FFFFFF',
+                          color: isSelected ? 'var(--primary-blue)' : 'var(--text-primary)'
+                        }}
+                      >
+                        {status}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}

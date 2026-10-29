@@ -69,9 +69,26 @@ export const validateProduct = [
         statusByStorage.set(variant.storage.trim(), statuses);
       }
       if (['iphone', 'samsung'].includes(req.body.category?.toLowerCase())) {
+        const declaredOptions = Array.isArray(req.body.storageOptions)
+          ? req.body.storageOptions
+          : typeof req.body.storageOptions === 'string'
+            ? req.body.storageOptions.split(',').map((s) => s.trim()).filter(Boolean)
+            : [];
+
+        for (const storage of declaredOptions) {
+          const statuses = statusByStorage.get(storage.trim()) || new Set();
+          const hasPta = statuses.has('PTA Approved');
+          const hasNonPta = statuses.has('Non-PTA');
+          if (!hasPta && !hasNonPta && !statuses.has('Not Applicable')) {
+            throw new Error(`Phone storage "${storage}" needs at least one price (PTA-approved or Non-PTA).`);
+          }
+        }
+
         for (const [storage, statuses] of statusByStorage) {
-          if (!statuses.has('PTA Approved') || !statuses.has('Non-PTA')) {
-            throw new Error(`Phone storage "${storage}" needs both PTA-approved and Non-PTA prices.`);
+          const hasPta = statuses.has('PTA Approved');
+          const hasNonPta = statuses.has('Non-PTA');
+          if (!hasPta && !hasNonPta && !statuses.has('Not Applicable')) {
+            throw new Error(`Phone storage "${storage}" needs at least one price (PTA-approved or Non-PTA).`);
           }
         }
       }

@@ -1025,3 +1025,110 @@ test('20. BUG 2: Cart quantity decrease and item removal work reliably without d
   assert.equal(incRes.data.data.items[0].quantity, 3);
 });
 
+test('21. Optional and Customizable PTA and Non-PTA Pricing for Products', async () => {
+  const customId = `pta-custom-${Date.now()}`;
+
+  // 1. Creation with single PTA, single Non-PTA, and both PTA & Non-PTA
+  const createRes = await request('/products', {
+    method: 'POST',
+    headers: { Cookie: adminCookie },
+    body: {
+      customId,
+      name: 'Custom PTA Phone',
+      brand: 'Apple',
+      category: 'iphone',
+      price: 180000,
+      stock: 10,
+      storageOptions: ['128GB', '256GB', '512GB'],
+      variants: [
+        { storage: '128GB', ptaStatus: 'PTA Approved', price: 200000 },
+        { storage: '256GB', ptaStatus: 'Non-PTA', price: 180000 },
+        { storage: '512GB', ptaStatus: 'PTA Approved', price: 300000 },
+        { storage: '512GB', ptaStatus: 'Non-PTA', price: 260000 }
+      ],
+      image: 'https://images.example.com/custom-pta.jpg'
+    }
+  });
+
+  assert.equal(createRes.status, 201);
+  assert.equal(createRes.data.data.variants.length, 4);
+
+  // 2. Reject storage with neither PTA nor Non-PTA price
+  const invalidRes = await request('/products', {
+    method: 'POST',
+    headers: { Cookie: adminCookie },
+    body: {
+      name: 'Missing Price Phone',
+      brand: 'Apple',
+      category: 'iphone',
+      price: 100000,
+      stock: 5,
+      storageOptions: ['64GB', '128GB'],
+      variants: [
+        { storage: '64GB', ptaStatus: 'PTA Approved', price: 100000 }
+        // 128GB is in storageOptions but has 0 variants
+      ],
+      image: 'https://images.example.com/missing.jpg'
+    }
+  });
+  assert.equal(invalidRes.status, 400);
+
+  // 3. Add single PTA item (128GB) to cart -> auto-selects PTA Approved & 200,000 price
+  const cartInit = await request('/cart');
+  const sessionCookie = cartInit.cookie ? cartInit.cookie.split(';')[0] : '';
+
+  const addPtaOnly = await request('/cart/items', {
+    method: 'POST',
+    headers: { Cookie: sessionCookie },
+    body: { productId: customId, storage: '128GB' }
+  });
+  assert.equal(addPtaOnly.status, 200);
+  assert.equal(addPtaOnly.data.data.items[0].storage, '128GB');
+  assert.equal(addPtaOnly.data.data.items[0].ptaStatus, 'PTA Approved');
+  assert.equal(addPtaOnly.data.data.items[0].price, 200000);
+
+  // 4. Add single Non-PTA item (256GB) to cart -> auto-selects Non-PTA & 180,000 price
+  const addNonPtaOnly = await request('/cart/items', {
+    method: 'POST',
+    headers: { Cookie: sessionCookie },
+    body: { productId: customId, storage: '256GB' }
+  });
+  assert.equal(addNonPtaOnly.status, 200);
+  const nonPtaItem = addNonPtaOnly.data.data.items.find((i) => i.storage === '256GB');
+  assert.ok(nonPtaItem);
+  assert.equal(nonPtaItem.ptaStatus, 'Non-PTA');
+  assert.equal(nonPtaItem.price, 180000);
+
+  // 5. Place order and verify consistent status and pricing
+  const orderRes = await request('/orders', {
+    method: 'POST',
+    headers: { Cookie: sessionCookie },
+    body: {
+      customer: {
+        fullName: 'PTA Test Customer',
+        email: 'pta.test@example.com',
+        phone: '+92 300 8887776',
+        address: 'PTA Test Address',
+        city: 'Islamabad'
+      },
+      items: [
+        { id: customId, storage: '128GB', ptaStatus: 'PTA Approved', quantity: 1 },
+        { id: customId, storage: '256GB', ptaStatus: 'Non-PTA', quantity: 1 }
+      ]
+    }
+  });
+
+  assert.equal(orderRes.status, 201);
+  const orderItems = orderRes.data.data.items;
+  assert.equal(orderItems.length, 2);
+
+  const item1 = orderItems.find((i) => i.storage === '128GB');
+  assert.equal(item1.ptaStatus, 'PTA Approved');
+  assert.equal(item1.price, 200000);
+
+  const item2 = orderItems.find((i) => i.storage === '256GB');
+  assert.equal(item2.ptaStatus, 'Non-PTA');
+  assert.equal(item2.price, 180000);
+});
+
+

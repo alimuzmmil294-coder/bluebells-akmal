@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { INITIAL_SETTINGS } from '../data/demoData';
 import { getStorageItem, setStorageItem } from '../utils/storage';
 import api from '../services/api';
@@ -64,20 +64,39 @@ export function StoreProvider({ children }) {
   // Live Admin Dashboard Statistics
   const [adminMetrics, setAdminMetrics] = useState(null);
 
-  // Toast System
+  // Toast System - Single active toast with 2.5s auto-dismiss and timeout reset
   const [toasts, setToasts] = useState([]);
+  const toastTimeoutRef = useRef(null);
 
-  const addToast = (message, type = 'success') => {
+  const removeToast = useCallback((id) => {
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current);
+      toastTimeoutRef.current = null;
+    }
+    setToasts((prev) => (id ? prev.filter((t) => t.id !== id) : []));
+  }, []);
+
+  const addToast = useCallback((message, type = 'success', duration = 2500) => {
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current);
+      toastTimeoutRef.current = null;
+    }
     const id = Date.now() + Math.random().toString(36).substring(2, 6);
-    setToasts((prev) => [...prev, { id, message, type }]);
-    setTimeout(() => {
-      removeToast(id);
-    }, 3800);
-  };
+    // Replace previous notifications so only one toast appears at a time without stacking
+    setToasts([{ id, message, type }]);
 
-  const removeToast = (id) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-  };
+    toastTimeoutRef.current = setTimeout(() => {
+      removeToast(id);
+    }, duration);
+  }, [removeToast]);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Sync settings cache for offline / instant render
   useEffect(() => {
