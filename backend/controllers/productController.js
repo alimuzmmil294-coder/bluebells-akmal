@@ -17,6 +17,15 @@ function formatProduct(product) {
   };
 }
 
+let productCache = null;
+let productCacheTimestamp = 0;
+const CACHE_TTL_MS = 60000; // 60 seconds
+
+export function invalidateProductCache() {
+  productCache = null;
+  productCacheTimestamp = 0;
+}
+
 export async function getProducts(req, res, next) {
   try {
     let {
@@ -70,6 +79,24 @@ export async function getProducts(req, res, next) {
       filter.featured = true;
     }
 
+    const isStandardListing =
+      !searchQuery &&
+      !minPrice &&
+      !maxPrice &&
+      !inStock &&
+      (!brand || brand === 'All') &&
+      (!category || category === 'All') &&
+      (!featured || featured === 'false') &&
+      page === 1 &&
+      limit >= 20;
+
+    // Return instant cached payload if valid
+    if (isStandardListing && productCache && Date.now() - productCacheTimestamp < CACHE_TTL_MS) {
+      res.setHeader('X-Cache', 'HIT');
+      res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=120');
+      return res.status(200).json(productCache);
+    }
+
     let sortOptions = { featured: -1, createdAt: -1 };
     switch (sort) {
       case 'price-low':
@@ -107,7 +134,7 @@ export async function getProducts(req, res, next) {
 
     const totalPages = Math.ceil(total / limit) || 1;
 
-    res.status(200).json({
+    const responsePayload = {
       success: true,
       data: formattedData,
       page,
@@ -116,7 +143,16 @@ export async function getProducts(req, res, next) {
       totalPages,
       hasNextPage: page < totalPages,
       hasPrevPage: page > 1
-    });
+    };
+
+    if (isStandardListing) {
+      productCache = responsePayload;
+      productCacheTimestamp = Date.now();
+    }
+
+    res.setHeader('X-Cache', 'MISS');
+    res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=120');
+    res.status(200).json(responsePayload);
   } catch (err) {
     next(err);
   }
@@ -231,6 +267,8 @@ export async function createProduct(req, res, next) {
       details: { name: product.name, price: product.price, sku: product.sku }
     });
 
+    invalidateProductCache();
+
     const formattedProduct = formatProduct(product);
 
     res.status(201).json({
@@ -316,6 +354,7 @@ export async function updateProduct(req, res, next) {
     }
 
     await product.save();
+    invalidateProductCache();
 
     await AuditLog.create({
       action: 'PRODUCT_UPDATED',
@@ -373,6 +412,7 @@ export async function deleteProduct(req, res, next) {
       // Soft deletion to preserve order integrity
       product.active = false;
       await product.save();
+      invalidateProductCache();
 
       await AuditLog.create({
         action: 'PRODUCT_DEACTIVATED',
@@ -392,6 +432,7 @@ export async function deleteProduct(req, res, next) {
 
     // Safe to delete permanently
     await Product.deleteOne({ _id: product._id });
+    invalidateProductCache();
 
     await AuditLog.create({
       action: 'PRODUCT_DELETED_PERMANENTLY',

@@ -15,7 +15,8 @@ const cartItemSchema = new mongoose.Schema(
     ptaStatus: { type: String, default: 'Not Applicable' },
     color: { type: String, default: 'Default' },
     colorHex: { type: String, default: '#000000' },
-    quantity: { type: Number, required: true, min: 1, default: 1 }
+    quantity: { type: Number, required: true, min: 1, default: 1 },
+    addedAt: { type: Date, default: Date.now }
   },
   { _id: false }
 );
@@ -36,6 +37,10 @@ const cartSchema = new mongoose.Schema(
     items: [cartItemSchema],
     couponCode: {
       type: String,
+      default: null
+    },
+    clearedAt: {
+      type: Date,
       default: null
     },
     lastAccessedAt: {

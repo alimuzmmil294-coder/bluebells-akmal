@@ -105,6 +105,58 @@ export async function connectDB() {
   }
 }
 
+import net from 'node:net';
+
+function isPortListening(host, port, timeoutMs = 300) {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host, port, timeout: timeoutMs });
+    socket.once('connect', () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once('timeout', () => {
+      socket.destroy();
+      resolve(false);
+    });
+    socket.once('error', () => {
+      socket.destroy();
+      resolve(false);
+    });
+  });
+}
+
+async function startMemoryDatabase(mongooseOptions) {
+  try {
+    const memoryRoot = await getMemoryDatabaseRoot();
+    memoryDbPath = await mkdtemp(path.join(memoryRoot, 'bluebells-mongodb-'));
+    const { MongoMemoryServer } = await import('mongodb-memory-server');
+    memoryServer = await MongoMemoryServer.create({
+      instance: {
+        dbPath: memoryDbPath,
+        args: ['--wiredTigerCacheSizeGB=0.5']
+      }
+    });
+    const memUri = memoryServer.getUri();
+    console.log(`[DB] MongoMemoryServer running at: ${memUri}`);
+    await mongoose.connect(memUri, mongooseOptions);
+    console.log('[DB] Connected to embedded in-memory database successfully.');
+    return mongoose.connection;
+  } catch (fallbackErr) {
+    let cleanupMessage = '';
+    try {
+      await cleanupMemoryDatabase();
+    } catch (cleanupErr) {
+      cleanupMessage = ` Cleanup also failed: ${cleanupErr.message}`;
+    }
+    const error = new Error(
+      `[DB] Could not establish MongoDB connection or start the development fallback: ${fallbackErr.message}.${cleanupMessage}`,
+      { cause: fallbackErr }
+    );
+    console.error(error.message);
+    throw error;
+  }
+}
+
 async function connect() {
   const uri = process.env.MONGODB_URI || process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/bluebells';
 
@@ -115,6 +167,17 @@ async function connect() {
     serverSelectionTimeoutMS: 5000,
     socketTimeoutMS: 45000,
   };
+
+  const isLocalhost = uri.includes('127.0.0.1') || uri.includes('localhost');
+
+  // Fast-probe localhost port 27017 in dev to avoid 5000ms serverSelectionTimeout when local daemon is absent
+  if (isLocalhost && process.env.NODE_ENV !== 'production') {
+    const isLocalRunning = await isPortListening('127.0.0.1', 27017, 300);
+    if (!isLocalRunning) {
+      console.log('[DB] Local MongoDB is not running on port 27017. Skipping 5s timeout and launching in-memory database immediately...');
+      return await startMemoryDatabase(mongooseOptions);
+    }
+  }
 
   try {
     console.log(`[DB] Attempting connection to MongoDB at: ${uri.replace(/:[^:]*@/, ':****@')}`);
@@ -128,35 +191,7 @@ async function connect() {
     }
 
     console.warn(`[DB] Could not connect to primary MongoDB URI (${err.message}). Initializing fallback MongoMemoryServer for development/testing...`);
-    try {
-      const memoryRoot = await getMemoryDatabaseRoot();
-      memoryDbPath = await mkdtemp(path.join(memoryRoot, 'bluebells-mongodb-'));
-      const { MongoMemoryServer } = await import('mongodb-memory-server');
-      memoryServer = await MongoMemoryServer.create({
-        instance: {
-          dbPath: memoryDbPath,
-          args: ['--wiredTigerCacheSizeGB=0.5']
-        }
-      });
-      const memUri = memoryServer.getUri();
-      console.log(`[DB] MongoMemoryServer running at: ${memUri}`);
-      await mongoose.connect(memUri, mongooseOptions);
-      console.log('[DB] Connected to embedded in-memory database successfully.');
-      return mongoose.connection;
-    } catch (fallbackErr) {
-      let cleanupMessage = '';
-      try {
-        await cleanupMemoryDatabase();
-      } catch (cleanupErr) {
-        cleanupMessage = ` Cleanup also failed: ${cleanupErr.message}`;
-      }
-      const error = new Error(
-        `[DB] Could not establish MongoDB connection or start the development fallback: ${fallbackErr.message}.${cleanupMessage}`,
-        { cause: fallbackErr }
-      );
-      console.error(error.message);
-      throw error;
-    }
+    return await startMemoryDatabase(mongooseOptions);
   }
 }
 

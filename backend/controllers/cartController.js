@@ -7,7 +7,8 @@ import { resolveProductVariant } from '../services/productVariantService.js';
 const cartQueues = new Map();
 
 function queueCartOperation(req, fn) {
-  const queueKey = req.session?.userId || req.sessionID || 'anon';
+  const guestHeader = req.headers['x-session-id'];
+  const queueKey = req.session?.userId || guestHeader || req.sessionID || 'anon';
   const prevPromise = cartQueues.get(queueKey) || Promise.resolve();
   const currentPromise = prevPromise
     .then(fn)
@@ -29,6 +30,7 @@ function sanitizeCartItems(items) {
     if (map.has(key)) {
       const existing = map.get(key);
       existing.quantity += raw.quantity;
+      if (raw.addedAt) existing.addedAt = raw.addedAt;
     } else {
       map.set(key, { ...raw });
     }
@@ -67,7 +69,8 @@ async function findOrCreateCart(req) {
   // Persist the session ID so anonymous carts can be found on the next request.
   req.session.cartInitialized = true;
   const userId = req.session?.userId || null;
-  const sessionId = req.sessionID || 'anon';
+  const guestHeader = req.headers['x-session-id'];
+  const sessionId = guestHeader || req.sessionID || 'anon';
 
   let cart = null;
   if (userId) {
@@ -96,6 +99,13 @@ export async function getCart(req, res, next) {
       const cart = await findOrCreateCart(req);
       const originalLength = cart.items.length;
       cart.items = sanitizeCartItems(cart.items);
+
+      // Filter out any stale items that were added prior to the latest clearCart
+      if (cart.clearedAt) {
+        cart.items = cart.items.filter(
+          (item) => !item.addedAt || new Date(item.addedAt) > new Date(cart.clearedAt)
+        );
+      }
 
       if (cart.items.length !== originalLength) {
         cart.lastAccessedAt = new Date();
@@ -130,7 +140,8 @@ export async function addItem(req, res, next) {
         storage,
         ptaStatus,
         color = 'Default',
-        colorHex = '#000000'
+        colorHex = '#000000',
+        addedAt
       } = req.body;
 
       const requestedQty = Math.max(1, parseInt(quantity, 10) || 1);
@@ -174,6 +185,17 @@ export async function addItem(req, res, next) {
       const selectedOriginalPrice = variant?.originalPrice || product.originalPrice || 0;
       const cart = await findOrCreateCart(req);
 
+      // Guard: If this add operation was initiated before the cart was cleared, ignore it
+      const itemAddedAt = addedAt ? new Date(addedAt) : new Date();
+      if (cart.clearedAt && itemAddedAt <= new Date(cart.clearedAt)) {
+        const enrichedItems = await enrichCartItemsWithStock(cart.items);
+        return {
+          message: 'Ignored addition prior to cart clear.',
+          items: enrichedItems,
+          couponCode: cart.couponCode
+        };
+      }
+
       // Clean existing duplicates first
       cart.items = sanitizeCartItems(cart.items);
 
@@ -196,6 +218,7 @@ export async function addItem(req, res, next) {
 
       if (existingIndex > -1) {
         cart.items[existingIndex].quantity = Math.min(availableStock, currentQty + requestedQty);
+        cart.items[existingIndex].addedAt = itemAddedAt;
       } else {
         cart.items.push({
           cartItemId,
@@ -211,7 +234,8 @@ export async function addItem(req, res, next) {
           ptaStatus: selectedPtaStatus,
           color,
           colorHex,
-          quantity: Math.min(availableStock, requestedQty)
+          quantity: Math.min(availableStock, requestedQty),
+          addedAt: itemAddedAt
         });
       }
 
@@ -341,21 +365,28 @@ export async function clearCart(req, res, next) {
   try {
     const result = await queueCartOperation(req, async () => {
       const cart = await findOrCreateCart(req);
+      const now = new Date();
       cart.items = [];
       cart.couponCode = null;
-      cart.lastAccessedAt = new Date();
+      cart.clearedAt = now;
+      cart.lastAccessedAt = now;
       await cart.save();
 
       const userId = req.session?.userId || null;
-      const sessionId = req.sessionID || 'anon';
-      if (userId) {
-        await Cart.updateMany({ user: userId }, { $set: { items: [], couponCode: null, lastAccessedAt: new Date() } });
-      }
-      if (sessionId && sessionId !== 'anon') {
-        await Cart.updateMany({ sessionId }, { $set: { items: [], couponCode: null, lastAccessedAt: new Date() } });
+      const guestHeader = req.headers['x-session-id'];
+      const sessionId = guestHeader || req.sessionID || 'anon';
+      const orConditions = [];
+      if (userId) orConditions.push({ user: userId });
+      if (sessionId && sessionId !== 'anon') orConditions.push({ sessionId });
+
+      if (orConditions.length > 0) {
+        await Cart.updateMany(
+          { $or: orConditions },
+          { $set: { items: [], couponCode: null, clearedAt: now, lastAccessedAt: now } }
+        );
       }
 
-      return { items: [], couponCode: null };
+      return { items: [], couponCode: null, clearedAt: now };
     });
 
     res.status(200).json({

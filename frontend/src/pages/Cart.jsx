@@ -120,8 +120,9 @@ export default function Cart() {
                     fontWeight: 700,
                     cursor: 'pointer'
                   }}
+                  title="Clear all products from cart"
                 >
-                  Clear Cart
+                  Clear All
                 </button>
               </div>
 

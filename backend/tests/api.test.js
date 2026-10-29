@@ -44,10 +44,15 @@ async function request(endpoint, options = {}) {
 
   // Capture cookies
   const setCookie = res.headers.get('set-cookie');
+  const headerMap = {};
+  res.headers.forEach((val, key) => {
+    headerMap[key.toLowerCase()] = val;
+  });
 
   return {
     status: res.status,
-    headers: res.headers,
+    headers: headerMap,
+    rawHeaders: res.headers,
     cookie: setCookie,
     data
   };
@@ -1311,6 +1316,77 @@ test('23. Clear All Cart: Clear operation permanently and immediately removes al
   const finalCart = await request('/cart', { headers: { Cookie: sessionCookie } });
   assert.equal(finalCart.data.data.items.length, 1);
   assert.equal(finalCart.data.data.items[0].productId, prodZ);
+});
+
+test('25. Product caching serves in < 500ms, and rapid 12-product additions with Clear All never resurrect', async () => {
+  // Test product loading speed & caching
+  const startT = Date.now();
+  const prodRes = await request('/products?limit=20');
+  const duration = Date.now() - startT;
+  assert.equal(prodRes.status, 200);
+  assert.ok(duration < 500, `Product API response duration (${duration}ms) is under 500ms`);
+  assert.ok(prodRes.data.success);
+  assert.ok(Array.isArray(prodRes.data.data));
+
+  // Second fetch hits memory cache
+  const cachedRes = await request('/products?limit=20');
+  assert.equal(cachedRes.status, 200);
+  assert.equal(cachedRes.headers['x-cache'], 'HIT');
+  assert.ok(cachedRes.headers['cache-control']?.includes('stale-while-revalidate'));
+
+  // Test concurrent 12-product additions and Clear All
+  const sessionId = `guest_test_clear_all_${Date.now()}`;
+  const prodIds = [];
+
+  for (let i = 1; i <= 12; i++) {
+    const customId = `batch-clear-item-${i}-${Date.now()}`;
+    prodIds.push(customId);
+    await request('/products', {
+      method: 'POST',
+      headers: { Cookie: adminCookie },
+      body: {
+        customId,
+        name: `Clear Test Item ${i}`,
+        brand: 'Apple',
+        category: 'accessories',
+        price: 1500 + i * 100,
+        stock: 20,
+        image: 'https://images.example.com/clear-test.jpg'
+      }
+    });
+  }
+
+  // Rapidly add all 12 products concurrently
+  const addPromises = prodIds.map((pId) =>
+    request('/cart/items', {
+      method: 'POST',
+      headers: { 'x-session-id': sessionId },
+      body: { productId: pId, quantity: 1 }
+    })
+  );
+  await Promise.all(addPromises);
+
+  // Cart must contain items
+  const cartWith12 = await request('/cart', { headers: { 'x-session-id': sessionId } });
+  assert.equal(cartWith12.status, 200);
+  assert.ok(cartWith12.data.data.items.length >= 10, 'Cart has loaded concurrent additions');
+
+  // Clear All
+  const clearRes = await request('/cart', {
+    method: 'DELETE',
+    headers: { 'x-session-id': sessionId }
+  });
+  assert.equal(clearRes.status, 200);
+  assert.equal(clearRes.data.success, true);
+  assert.equal(clearRes.data.data.items.length, 0);
+
+  // Delay 200ms to simulate late asynchronous resolutions
+  await new Promise((resolve) => setTimeout(resolve, 200));
+
+  // Verify cart remains 100% empty and no items reappear
+  const cartAfterDelay = await request('/cart', { headers: { 'x-session-id': sessionId } });
+  assert.equal(cartAfterDelay.status, 200);
+  assert.equal(cartAfterDelay.data.data.items.length, 0, 'Cart must permanently remain empty; 0 items reappeared');
 });
 
 

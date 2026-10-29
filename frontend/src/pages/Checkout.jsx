@@ -381,7 +381,26 @@ export default function Checkout() {
                 top: '100px'
               }}
             >
-              <h3 style={{ fontSize: '1.2rem', fontWeight: 800, marginBottom: '20px' }}>Your Order Review</h3>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 800, margin: 0 }}>Your Order Review</h3>
+                <button
+                  type="button"
+                  onClick={clearCart}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#DC2626',
+                    fontSize: '0.82rem',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    padding: '2px 6px',
+                    borderRadius: 'var(--radius-sm)'
+                  }}
+                  title="Clear all products from cart"
+                >
+                  Clear All
+                </button>
+              </div>
 
               {/* Items List preview */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', maxHeight: '280px', overflowY: 'auto', marginBottom: '20px', paddingRight: '4px' }}>

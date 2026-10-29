@@ -60,6 +60,30 @@ export function CartProvider({ children }) {
     setStorageItem('bluebells_applied_coupon', appliedCouponCode);
   }, [appliedCouponCode]);
 
+  // Synchronize cart state across browser tabs
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleStorageChange = (e) => {
+      if (e.key === 'bluebells_cart') {
+        try {
+          const newItems = deduplicateCartItems(JSON.parse(e.newValue || '[]'));
+          cartItemsRef.current = newItems;
+          setCartItems(newItems);
+        } catch (_) {}
+      } else if (e.key === 'bluebells_cart_cleared_at') {
+        clearEpochRef.current += 1;
+        cartItemsRef.current = [];
+        setCartItems([]);
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, []);
+
   // Memoized totals calculation
   const totals = useMemo(() => {
     return calculateCartTotals(
@@ -79,15 +103,31 @@ export function CartProvider({ children }) {
     const serverItems = response?.data?.items;
     if (!Array.isArray(serverItems)) return;
 
+    const clearedAtTimestamp = typeof window !== 'undefined'
+      ? parseInt(localStorage.getItem('bluebells_cart_cleared_at') || '0', 10)
+      : 0;
+
     const currentLocal = cartItemsRef.current || [];
 
+    // Filter server items: drop any item that was added before or at the last cart clear timestamp
+    const filteredServerItems = serverItems.filter((item) => {
+      if (!item) return false;
+      if (clearedAtTimestamp > 0 && item.addedAt) {
+        const itemTime = new Date(item.addedAt).getTime();
+        if (itemTime <= clearedAtTimestamp) {
+          return false;
+        }
+      }
+      return true;
+    });
+
     // If local cart is currently empty (e.g., cleared by the user), never revive it with stale server items
-    if (currentLocal.length === 0 && serverItems.length > 0) {
+    if (currentLocal.length === 0 && filteredServerItems.length > 0 && clearedAtTimestamp > 0) {
       return;
     }
 
     const serverMap = new Map();
-    for (const item of serverItems) {
+    for (const item of filteredServerItems) {
       if (item && !pendingRemovals.current.has(item.cartItemId)) {
         serverMap.set(item.cartItemId, { ...item });
       }
@@ -231,6 +271,13 @@ export function CartProvider({ children }) {
       nextCart = [optimisticItem, ...cleanCurrent];
     }
 
+    // Remove any previous clear timestamp since user intentionally added a new item
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.removeItem('bluebells_cart_cleared_at');
+      } catch (_) {}
+    }
+
     // Capture the epoch at the time of addition
     const requestEpoch = clearEpochRef.current;
 
@@ -345,7 +392,14 @@ export function CartProvider({ children }) {
     // Increment clear epoch immediately to invalidate all pending / in-flight additions
     clearEpochRef.current += 1;
     const thisClearEpoch = clearEpochRef.current;
+    const clearTimestamp = Date.now();
     pendingRemovals.current.clear();
+
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('bluebells_cart_cleared_at', clearTimestamp.toString());
+      } catch (_) {}
+    }
 
     // Synchronously purge client state and local storage immediately
     cartItemsRef.current = [];
@@ -366,8 +420,10 @@ export function CartProvider({ children }) {
         setActiveCoupon(null);
         setStorageItem('bluebells_applied_coupon', null);
       }
+      addToast('Cart cleared', 'info');
     } catch (err) {
       console.warn('[Cart] Server clear failed; local cart remains cleared:', err.message);
+      addToast('Failed to clear cart on server. Please try again.', 'error');
     }
   };
 

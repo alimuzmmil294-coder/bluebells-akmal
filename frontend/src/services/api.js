@@ -9,10 +9,25 @@ const rawApiUrl = (import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE
 const defaultBaseUrl = '/api';
 const BASE_URL = (rawApiUrl || defaultBaseUrl).replace(/\/+$/, '');
 
+export function getOrCreateSessionId() {
+  if (typeof window === 'undefined') return null;
+  try {
+    let sid = localStorage.getItem('bluebells_guest_session_id');
+    if (!sid) {
+      sid = 'guest_' + Math.random().toString(36).substring(2, 12) + Date.now().toString(36);
+      localStorage.setItem('bluebells_guest_session_id', sid);
+    }
+    return sid;
+  } catch {
+    return null;
+  }
+}
+
 async function request(endpoint, options = {}) {
   const url = `${BASE_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
 
   const token = typeof window !== 'undefined' ? localStorage.getItem('bluebells_auth_token') : null;
+  const sessionId = getOrCreateSessionId();
 
   const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
 
@@ -27,6 +42,10 @@ async function request(endpoint, options = {}) {
 
   if (token && !headers['Authorization']) {
     headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  if (sessionId && !headers['X-Session-Id']) {
+    headers['X-Session-Id'] = sessionId;
   }
 
   const config = {

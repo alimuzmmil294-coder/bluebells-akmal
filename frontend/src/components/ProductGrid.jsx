@@ -9,22 +9,21 @@ export default function ProductGrid({
 }) {
   if (loading) {
     return (
-      <div className="product-grid">
-        {[1, 2, 3, 4].map((n) => (
-          <div
-            key={n}
-            style={{
-              height: '380px',
-              borderRadius: 'var(--radius-lg)',
-              backgroundColor: 'var(--bg-secondary)',
-              border: '1px solid var(--border-color)',
-              opacity: 0.6,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}
-          >
-            <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Loading inventory...</span>
+      <div className="product-grid" aria-busy="true" aria-label="Loading products">
+        {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+          <div key={n} className="product-card-skeleton">
+            <div className="skeleton-image-wrap">
+              <div className="skeleton-image skeleton-shimmer" />
+            </div>
+            <div className="skeleton-body">
+              <div className="skeleton-brand skeleton-shimmer" />
+              <div className="skeleton-title skeleton-shimmer" />
+              <div className="skeleton-rating skeleton-shimmer" />
+              <div className="skeleton-footer">
+                <div className="skeleton-price skeleton-shimmer" />
+                <div className="skeleton-button skeleton-shimmer" />
+              </div>
+            </div>
           </div>
         ))}
       </div>

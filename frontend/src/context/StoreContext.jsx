@@ -23,15 +23,22 @@ if (typeof window !== 'undefined') {
 const StoreContext = createContext(null);
 
 export function StoreProvider({ children }) {
-  // Products - initialized as empty array, populated strictly from backend database
-  const [products, setProducts] = useState([]);
-  const [productsLoading, setProductsLoading] = useState(true);
+  // Products - initialized with client-side SWR cache for instant first paint
+  const [products, setProducts] = useState(() => {
+    const cached = getStorageItem('bluebells_products_cache', []);
+    return Array.isArray(cached) ? cached : [];
+  });
+  const [productsLoading, setProductsLoading] = useState(() => {
+    const cached = getStorageItem('bluebells_products_cache', []);
+    return !(Array.isArray(cached) && cached.length > 0);
+  });
   const [productsPagination, setProductsPagination] = useState({
     page: 1,
     limit: 20,
     total: 0,
     totalPages: 1
   });
+  const lastCatalogFetchRef = useRef(0);
 
   // Orders - strictly database-backed
   const [orders, setOrders] = useState([]);
@@ -104,12 +111,17 @@ export function StoreProvider({ children }) {
   }, [settings]);
 
   // Fetch products from database
-  const fetchProducts = useCallback(async (params = {}) => {
-    setProductsLoading(true);
+  const fetchProducts = useCallback(async (params = {}, options = {}) => {
+    const isBackground = options.background;
+    if (!isBackground) {
+      setProductsLoading(true);
+    }
     try {
       const res = await api.products.getAll(params);
       if (res.success && Array.isArray(res.data)) {
         setProducts(res.data);
+        lastCatalogFetchRef.current = Date.now();
+        setStorageItem('bluebells_products_cache', res.data);
         setProductsPagination({
           page: res.page,
           limit: res.limit,
@@ -270,13 +282,16 @@ export function StoreProvider({ children }) {
     };
   }, [isAdminLoggedIn, fetchAdminData]);
 
-  // Refresh the public catalog on window focus or visibility, not continuous background polling
+  // Refresh the public catalog on window focus or visibility, throttled to 60s
   useEffect(() => {
     if (isAdminLoggedIn) return undefined;
 
     const handleWindowFocus = () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        fetchProducts({ limit: 100 });
+        const now = Date.now();
+        if (now - lastCatalogFetchRef.current > 60000) {
+          fetchProducts({ limit: 100 }, { background: true });
+        }
       }
     };
 
